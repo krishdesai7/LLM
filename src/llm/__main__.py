@@ -1,9 +1,12 @@
-import typer
+from __future__ import annotations
+
+from .cli import app
 
 
 def main() -> None:
-    raise typer.Exit()
+    """Console-script entry point (``llm``)."""
+    app()
 
 
 if __name__ == "__main__":
-    typer.run(main)
+    main()
