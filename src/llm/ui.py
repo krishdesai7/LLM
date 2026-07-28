@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import questionary
@@ -9,25 +10,35 @@ from rich.console import Console
 from rich.table import Table
 from rich.theme import Theme
 
-from . import catalog
+from . import catalog, web
 
 if TYPE_CHECKING:
     from .registry import Provider, Registry
 
-__all__ = ["console", "pick_model", "providers_table"]
+__all__ = [
+    "console",
+    "pick_model",
+    "providers_table",
+    "search_status",
+    "search_table",
+    "stderr",
+]
 
-console = Console(
-    theme=Theme(
-        {
-            "prompt": "bold cyan",
-            "model": "bold magenta",
-            "reasoning": "dim italic",
-            "meta": "dim",
-            "warn": "yellow",
-            "err": "bold red",
-        }
-    )
+_THEME = Theme(
+    {
+        "prompt": "bold cyan",
+        "model": "bold magenta",
+        "reasoning": "dim italic",
+        "meta": "dim",
+        "tool": "bold green",
+        "warn": "yellow",
+        "err": "bold red",
+    }
 )
+
+console = Console(theme=_THEME)
+#: for progress chatter that must not pollute a piped answer
+stderr = Console(theme=_THEME, stderr=True)
 
 _STYLE = questionary.Style(
     [
@@ -135,6 +146,35 @@ def _select(message: str, choices: list[Any], *, searchable: bool = False) -> An
         return questionary.select(message, choices=choices, **kwargs).ask()
     except TypeError:  # older questionary without the search-filter options
         return questionary.select(message, choices=choices, style=_STYLE).ask()
+
+
+def search_status() -> str:
+    """One-line description of which search backend is in play."""
+    try:
+        backend = web.active_backend()
+    except web.WebError as exc:
+        return str(exc)
+    if not backend.is_ready():
+        return f"{backend.label} selected but not configured"
+    return f"searching via {backend.label}"
+
+
+def search_table() -> Table:
+    table = Table(box=None, pad_edge=False, header_style="bold")
+    table.add_column("backend")
+    table.add_column("env var")
+    table.add_column("ready", justify="center")
+    active = None
+    with suppress(web.WebError):
+        active = web.active_backend().name
+    for backend in web.backends():
+        marker = " [tool]←active[/tool]" if backend.name == active else ""
+        table.add_row(
+            f"[model]{backend.name}[/model]{marker}",
+            backend.url_var or backend.env_var or "[meta]none needed[/meta]",
+            "[green]✓[/green]" if backend.is_ready() else "[meta]—[/meta]",
+        )
+    return table
 
 
 def providers_table(registry: Registry) -> Table:

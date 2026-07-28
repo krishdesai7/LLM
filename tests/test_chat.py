@@ -33,10 +33,15 @@ def test_reasoning_is_not_fed_back_into_history(make_session: Any) -> None:
     assert "hmm" not in session.messages[-1].content
 
 
-def test_send_returns_the_reply_without_streaming(make_session: Any) -> None:
+def test_send_returns_just_the_reply_text(make_session: Any) -> None:
     session = make_session()
     assert session.send("hi") == "Hello, world"
-    assert calls_of(session)[0]["stream"] is False
+
+
+def test_no_tools_are_advertised_by_default(make_session: Any) -> None:
+    session = make_session()
+    list(session.stream("hi"))
+    assert "tools" not in calls_of(session)[0]
 
 
 def test_system_prompt_leads_the_payload(make_session: Any) -> None:

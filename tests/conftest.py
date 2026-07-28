@@ -15,9 +15,23 @@ REF = ModelRef(PROVIDER, "fake-1")
 
 
 @dataclass
+class FakeFunction:
+    name: str | None = None
+    arguments: str | None = None
+
+
+@dataclass
+class FakeToolCallFragment:
+    index: int = 0
+    id: str | None = None
+    function: FakeFunction | None = None
+
+
+@dataclass
 class FakeDelta:
     content: str | None = None
     reasoning_content: str | None = None
+    tool_calls: list[FakeToolCallFragment] | None = None
 
 
 @dataclass
@@ -50,56 +64,86 @@ class FakeStream:
 
 
 class FakeCompletions:
-    """Records every request and replays the same canned chunks."""
+    """Records every request and replays one canned round per call."""
 
-    def __init__(self, chunks: list[FakeChunk]) -> None:
-        self.chunks = chunks
+    def __init__(self, rounds: list[list[FakeChunk]]) -> None:
+        self.rounds = rounds
         self.calls: list[dict[str, Any]] = []
 
     def create(self, **kwargs: Any) -> Any:
+        index = min(len(self.calls), len(self.rounds) - 1)
         self.calls.append(kwargs)
-        if kwargs.get("stream"):
-            return FakeStream(self.chunks)
-        return _as_completion(self.chunks)
+        return FakeStream(self.rounds[index])
 
 
 class FakeClient:
-    def __init__(self, chunks: list[FakeChunk]) -> None:
-        self.completions = FakeCompletions(chunks)
+    def __init__(self, rounds: list[list[FakeChunk]]) -> None:
+        self.completions = FakeCompletions(rounds)
         self.chat = type("_Chat", (), {"completions": self.completions})()
 
 
-def _as_completion(chunks: list[FakeChunk]) -> Any:
-    text = "".join(
-        choice.delta.content or "" for chunk in chunks for choice in chunk.choices
-    )
-    message = type("_Message", (), {"content": text})()
-    choice = type("_Choice", (), {"message": message})()
-    usage = next((chunk.usage for chunk in chunks if chunk.usage), None)
-    return type("_Completion", (), {"choices": [choice], "usage": usage})()
+def text_chunk(text: str) -> FakeChunk:
+    return FakeChunk([FakeChoice(FakeDelta(content=text))])
 
 
-def default_chunks() -> list[FakeChunk]:
+def tool_call_chunks(
+    name: str, arguments: str, call_id: str = "call_1"
+) -> list[FakeChunk]:
+    """A tool call split across chunks, the way providers really stream it."""
+    head = FakeToolCallFragment(index=0, id=call_id, function=FakeFunction(name=name))
+    chunks = [FakeChunk([FakeChoice(FakeDelta(tool_calls=[head]))])]
+    chunks += [
+        FakeChunk(
+            [
+                FakeChoice(
+                    FakeDelta(
+                        tool_calls=[
+                            FakeToolCallFragment(
+                                index=0, function=FakeFunction(arguments=piece)
+                            )
+                        ]
+                    )
+                )
+            ]
+        )
+        for piece in _split(arguments)
+    ]
+    return chunks
+
+
+def _split(text: str, size: int = 4) -> list[str]:
+    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
+
+
+def default_round() -> list[FakeChunk]:
     return [
         FakeChunk([FakeChoice(FakeDelta(reasoning_content="hmm"))]),
-        FakeChunk([FakeChoice(FakeDelta(content="Hello"))]),
-        FakeChunk([FakeChoice(FakeDelta(content=", world"))]),
+        text_chunk("Hello"),
+        text_chunk(", world"),
         FakeChunk(usage=FakeUsage(prompt_tokens=7, completion_tokens=3)),
     ]
 
 
 @pytest.fixture
 def chunks() -> list[FakeChunk]:
-    return default_chunks()
+    return default_round()
 
 
 @pytest.fixture
 def make_session() -> Any:
-    """Build a ChatSession backed by a fake client."""
+    """Build a ChatSession backed by a fake client.
 
-    def _make(chunks: list[FakeChunk] | None = None, **kwargs: Any) -> ChatSession:
-        client = FakeClient(default_chunks() if chunks is None else chunks)
-        return ChatSession(ref=REF, client=client, **kwargs)  # type: ignore[arg-type]
+    Pass ``chunks`` for a single round, or ``rounds`` to script a tool loop.
+    """
+
+    def _make(
+        chunks: list[FakeChunk] | None = None,
+        rounds: list[list[FakeChunk]] | None = None,
+        **kwargs: Any,
+    ) -> ChatSession:
+        if rounds is None:
+            rounds = [default_round() if chunks is None else chunks]
+        return ChatSession(ref=REF, client=FakeClient(rounds), **kwargs)  # type: ignore[arg-type]
 
     return _make
 

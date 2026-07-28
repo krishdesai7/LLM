@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import typer
 from openai import OpenAIError
 
-from . import catalog, repl, ui
+from . import catalog, repl, tools, ui
+from . import web as webmod
 from .chat import ChatSession
 from .registry import LLMError, Registry, config_path
 
@@ -44,11 +45,17 @@ MarkdownOpt = Annotated[
         help="Render the reply as markdown once complete, instead of streaming.",
     ),
 ]
+WebOpt = Annotated[
+    bool,
+    typer.Option(
+        "--web/--no-web",
+        help="Let the model search the web and fetch pages via tool calls.",
+    ),
+]
 
 
 @app.callback()
 def main_callback(ctx: typer.Context) -> None:
-    _load_dotenv()
     if ctx.invoked_subcommand is None:
         ctx.invoke(chat)
 
@@ -59,6 +66,7 @@ def chat(
     system: SystemOpt = None,
     temperature: TempOpt = None,
     markdown: MarkdownOpt = False,
+    web: WebOpt = False,
     no_reasoning: Annotated[
         bool, typer.Option("--no-reasoning", help="Hide streamed reasoning traces.")
     ] = False,
@@ -71,6 +79,7 @@ def chat(
         client=client,
         system=system,
         params=_params(temperature),
+        tools=tools.web_toolbox() if web else None,
     )
     repl.run(registry, session, markdown=markdown, show_reasoning=not no_reasoning)
 
@@ -82,6 +91,7 @@ def ask(
     system: SystemOpt = None,
     temperature: TempOpt = None,
     markdown: MarkdownOpt = False,
+    web: WebOpt = False,
 ) -> None:
     """One-shot prompt. Reads stdin when piped, so `cat x | llm ask` works."""
     text = " ".join(prompt or []).strip()
@@ -93,7 +103,11 @@ def ask(
     registry = Registry.load()
     ref, client = _open(registry, model, interactive=False)
     session = ChatSession(
-        ref=ref, client=client, system=system, params=_params(temperature)
+        ref=ref,
+        client=client,
+        system=system,
+        params=_params(temperature),
+        tools=tools.web_toolbox() if web else None,
     )
     try:
         if markdown:
@@ -101,18 +115,21 @@ def ask(
 
             ui.console.print(Markdown(session.send(full)))
         else:
-            for delta in session.stream(full):
-                if delta.kind == "text":
-                    ui.console.print(
-                        delta.text,
-                        end="",
-                        soft_wrap=True,
-                        markup=False,
-                        highlight=False,
-                    )
-            ui.console.print()
+            _echo_stream(session, full)
     except (OpenAIError, LLMError) as exc:
         _die(exc)
+
+
+def _echo_stream(session: ChatSession, prompt: str) -> None:
+    """Stream an answer to stdout, reporting tool use on stderr."""
+    for delta in session.stream(prompt):
+        if delta.kind == "text":
+            ui.console.print(
+                delta.text, end="", soft_wrap=True, markup=False, highlight=False
+            )
+        elif delta.kind == "tool_call":
+            ui.stderr.print(f"[tool]tool[/tool] {delta.text}", highlight=False)
+    ui.console.print()
 
 
 @app.command()
@@ -176,6 +193,41 @@ def resolve(
     ui.console.print(f"  api_key   {ref.provider.env_var} ({ready})")
 
 
+@app.command("web")
+def web_command(
+    query: Annotated[
+        list[str] | None, typer.Argument(help="Search query. Omit to list backends.")
+    ] = None,
+) -> None:
+    """Show the search backends, or run a query through the active one."""
+    if not query:
+        ui.console.print(ui.search_table())
+        ui.console.print(f"\n[meta]{ui.search_status()}[/meta]")
+        ui.console.print(
+            "[meta]override with LLM_SEARCH_BACKEND=<name>[/meta]",
+        )
+        return
+    try:
+        results = webmod.search(" ".join(query))
+    except webmod.WebError as exc:
+        _die(exc)
+    ui.console.print(webmod.render(results), highlight=False)
+
+
+@app.command()
+def fetch(
+    url: Annotated[str, typer.Argument(help="A public http(s) URL.")],
+    chars: Annotated[
+        int, typer.Option("--chars", help="Truncate the extracted text.")
+    ] = webmod.DEFAULT_PAGE_CHARS,
+) -> None:
+    """Print a page as the model would see it. Useful for checking extraction."""
+    try:
+        ui.console.print(webmod.fetch(url, max_chars=chars), highlight=False)
+    except webmod.WebError as exc:
+        _die(exc)
+
+
 @app.command()
 def init() -> None:
     """Write a starter config file with alias and provider examples."""
@@ -222,15 +274,6 @@ def _params(temperature: float | None) -> dict[str, float]:
 def _die(exc: Exception) -> NoReturn:
     ui.console.print(f"[err]{exc}[/err]")
     raise typer.Exit(1) from exc
-
-
-def _load_dotenv() -> None:
-    """Best-effort .env loading so keys land in os.environ."""
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-    load_dotenv(override=False)
 
 
 _CONFIG_TEMPLATE = """\

@@ -14,13 +14,13 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from rich.markdown import Markdown
 
-from . import ui
+from . import tools, ui
 from .registry import LLMError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .chat import ChatSession
+    from .chat import ChatSession, Delta
     from .registry import Registry
 
 __all__ = ["run"]
@@ -97,7 +97,10 @@ def _turn_streamed(loop: _Loop, prompt: str) -> None:
             if thinking:
                 thinking = False
                 _write("\n\n")
-            _write(delta.text)
+            if delta.kind == "text":
+                _write(delta.text)
+            else:
+                _report(delta)
     ui.console.print("\n")
 
 
@@ -108,10 +111,26 @@ def _write(text: str, *, style: str | None = None) -> None:
     )
 
 
+def _report(delta: Delta) -> None:
+    """Show tool activity on its own line, out of band from the answer."""
+    match delta.kind:
+        case "tool_call":
+            ui.console.print(f"\n[tool]tool[/tool] {delta.text}", highlight=False)
+        case "tool_result":
+            ui.console.print(f"[meta]  ↳ {delta.text}[/meta]\n", highlight=False)
+        case _:
+            ui.console.print(f"[warn]{delta.text}[/warn]")
+
+
 def _turn_buffered(loop: _Loop, prompt: str) -> None:
-    with ui.console.status("thinking…"):
-        reply = loop.session.send(prompt)
-    ui.console.print(Markdown(reply))
+    parts: list[str] = []
+    with ui.console.status("thinking…"), closing(loop.session.stream(prompt)) as stream:
+        for delta in stream:
+            if delta.kind == "text":
+                parts.append(delta.text)
+            elif delta.kind != "reasoning":
+                _report(delta)
+    ui.console.print(Markdown("".join(parts).strip()))
     ui.console.print()
 
 
@@ -185,6 +204,16 @@ def _cmd_providers(loop: _Loop, _arg: str) -> None:
     ui.console.print(ui.providers_table(loop.registry))
 
 
+def _cmd_web(loop: _Loop, _arg: str) -> None:
+    """Toggle the web tools for this conversation."""
+    if loop.session.tools:
+        loop.session.tools = None
+        ui.console.print("[meta]web access off[/meta]")
+        return
+    loop.session.tools = tools.web_toolbox()
+    ui.console.print(f"[meta]web access on — {ui.search_status()}[/meta]")
+
+
 _COMMANDS: dict[str, Callable[[_Loop, str], None]] = {
     "help": _cmd_help,
     "?": _cmd_help,
@@ -200,6 +229,7 @@ _COMMANDS: dict[str, Callable[[_Loop, str], None]] = {
     "markdown": _cmd_markdown,
     "temp": _cmd_temp,
     "providers": _cmd_providers,
+    "web": _cmd_web,
 }
 
 _HELP = """[bold]commands[/bold]
@@ -208,6 +238,7 @@ _HELP = """[bold]commands[/bold]
   [prompt]/clear[/prompt]           forget the conversation so far
   [prompt]/history[/prompt]         replay the conversation
   [prompt]/save[/prompt] [meta][path][/meta]    write the transcript as markdown
+  [prompt]/web[/prompt]             toggle web search + page fetching
   [prompt]/markdown[/prompt]        toggle rendered markdown vs. live streaming
   [prompt]/temp[/prompt] [meta]0.7[/meta]       set sampling temperature
   [prompt]/providers[/prompt]       which providers have keys
@@ -262,4 +293,6 @@ def _banner(loop: _Loop) -> None:
     )
     if session.system:
         ui.console.print(f"[meta]system:[/meta] {session.system}")
+    if session.tools:
+        ui.console.print(f"[meta]web access on — {ui.search_status()}[/meta]")
     ui.console.print("[meta]/help for commands · ctrl-d to quit[/meta]\n")
