@@ -133,7 +133,21 @@ a service you've set up, that one is used instead.
 
 Redlib reads Reddit by presenting itself as Reddit's official app, which is
 against Reddit's terms. No account is involved, but expect it to break
-occasionally when Reddit changes something; rebuilding from `main` is the fix.
+occasionally when Reddit changes something.
+
+You'll know it has broken when Reddit links come back as "Redlib could not load
+…" errors, or keep arriving with the "Redlib … is unreachable" note (it failed
+to start). The fix is to rebuild from `main`, which usually has a patch
+within a few days:
+
+```shell
+cargo install --git https://github.com/redlib-org/redlib --locked --force
+pkill redlib    # stop any old copy still running; the next session starts the new one
+```
+
+If that doesn't help yet, check the
+[Redlib issues](https://github.com/redlib-org/redlib/issues). Until it's fixed,
+Reddit links fall back to the feeds on their own.
 
 Note that some providers also do search _their_ side (`web_search_options` on OpenAI, sonar models on Perplexity, `:online` on OpenRouter). That's a different mechanism, spelled differently by each one. This client-side loop works identically everywhere instead.
 
