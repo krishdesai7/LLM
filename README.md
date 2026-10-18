@@ -133,7 +133,9 @@ In chat: `/model` (reopens the picker, keeps your history), `/system`,
 
 ## Config
 
-`llm init` writes `~/.config/llm/config.toml` (override with `$LLM_CONFIG`):
+`llm init` writes `$XDG_CONFIG_HOME/llm/config.toml`, falling back to
+`~/.config/llm/config.toml` when `$XDG_CONFIG_HOME` is unset (override the
+path entirely with `$LLM_CONFIG`):
 
 ```toml
 default_model = "moonshot/kimi-k2"
