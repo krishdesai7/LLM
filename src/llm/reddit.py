@@ -36,7 +36,7 @@ __all__ = ["REDDIT_URL_VAR", "fetch", "handles", "instance_url", "render_redlib"
 
 REDDIT_URL_VAR = "LLM_REDDIT_URL"
 #: Threads are dense with useful text, so they get more room than other pages.
-REDDIT_PAGE_CHARS = 12_000
+REDDIT_PAGE_CHARS = 25_000
 #: Longest we will sit out the feed's rate limit before giving up.
 FEED_MAX_WAIT = 65.0
 #: How long a Redlib we started gets to begin answering (it takes about 2s).

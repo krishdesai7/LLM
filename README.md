@@ -113,7 +113,7 @@ model picks those URLs, often from a page it just read, so a prompt injected int
 **Reddit** turns away scripted requests (a JavaScript challenge, a login wall,
 or a 403), so Reddit links take their own route. With `LLM_REDDIT_URL` pointing
 at a self-hosted [Redlib](https://github.com/redlib-org/redlib), threads come
-back in full as a comment tree, truncated at 12,000 characters. Without it, or if
+back in full as a comment tree, truncated at 25,000 characters. Without it, or if
 Redlib is down, they fall back to Reddit's RSS feeds, which allow about one page
 a minute and carry only some comments. `llm web` shows which route is active.
 

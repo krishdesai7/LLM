@@ -51,7 +51,8 @@ WEB_PREAMBLE = (
     "at, and skip them for stable facts. One or two targeted searches are "
     "usually enough; prefer reading an authoritative source (official docs, "
     "release notes, the project's own site) over searching again. Cite the "
-    "URLs you relied on."
+    "URLs you relied on, and say when they are old enough that the answer "
+    "may have changed since."
 )
 
 
