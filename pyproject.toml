@@ -3,26 +3,34 @@ name = "llm"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-authors = [
-    { name = "Krish Desai", email = "krishdesai7@gmail.com" }
-]
-requires-python = ">=3.14"
+requires-python = ">=3.15"
+license = "MIT OR Apache-2.0"
+authors = [{ name = "Krish Desai", email = "krishdesai7@gmail.com" }]
 dependencies = [
-    "httpx>=0.28.1",
-    "openai>=2.13.0",
-    "prompt-toolkit>=3.0.52",
-    "questionary>=2.1.1",
-    "rich>=14.3.0",
-    "typer>=0.27.0",
+  "httpx>=0.28.1",
+  "openai>=3.35.1",
+  "prompt-toolkit>=3.0.53",
+  "questionary>=2.1.1",
+  "rich>=15.0.0",
+  "typer>=0.27.3",
 ]
-license="MIT OR Apache-2.0"
 
 [project.scripts]
 llm = "llm:main"
 
+
+[dependency-groups]
+dev = [
+  "pyrefly>=1.4.0",
+  "pytest>=9.1.1",
+  "ruff>=0.17.1",
+]
+
+
 [build-system]
-requires = ["uv_build>=0.11.32,<0.12.0"]
+requires = ["uv_build>=0.11.32,<0.14.0"]
 build-backend = "uv_build"
+
 
 [tool.pyrefly]
 check-unannotated-defs = true
@@ -30,13 +38,11 @@ infer-return-types = "checked"
 # so test modules can import the shared fakes in tests/conftest.py
 search-path = ["src", "tests"]
 
+
 [tool.uv]
 required-version = ">=0.11.30"
 preview-features = true
 
-cache-keys = [
-    { file = "pyproject.toml" },
-]
 
 [tool.ruff]
 src = ["src"]
@@ -47,31 +53,31 @@ extend-exclude = ["*.ipynb"]
 future-annotations = true
 preview = true
 extend-select = [
-    "B",   # flake8-bugbear: likely bugs / footguns
-    "I",   # isort-style import checks
-    "UP",  # pyupgrade: modern Python syntax
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # Pyflakes (catches undefined variables, broken logic, unused imports)
-    "C90", # mccabe: Cyclomatic complexity limits (keeps functions small and readable)
-    "N",   # pep8-naming: Enforces PEP 8 naming conventions (PascalCase classes, snake_case functions)
-    "ASYNC", # flake8-async: Catches bad async programming practices and deadlocks
-    "S",   # flake8-bandit: Security auditing (e.g., hardcoded credentials, unsafe temp files)
-    "A",   # flake8-builtins: Prevents shadowing built-in names (e.g., re-defining `id`, `list`, or `format`)
-    "FA",  # flake8-future-annotations: Enforces modern postponed annotations behavior
-    "PIE", # flake8-pie: Code simplification suggestions
-    "PT",  # flake8-pytest-style: Enforces idiomatic pytest fixture/assertion style
-    "RET", # flake8-return: Simplifies return statements (removes unnecessary else/elif blocks)
-    "SIM", # flake8-simplify: Refactors unnecessarily complex logic into cleaner idiomatic Python
-    "ARG", # flake8-unused-arguments: Flags unused function arguments
-    "PTH", # flake8-use-pathlib: Forces the use of modern `pathlib.Path` over legacy `os.path`
-    "PGH", # pygrep-hooks: Prevents generic blanket `# type: ignore` or `# noqa` directives without specific error codes
-    "RUF", # Ruff-specific rules: Catches edge-cases, invalid regexes, and native Ruff optimization hints
-    "PERF", # Perflint: Highlights performance anti-patterns in loops and data structures
-    "FURB", # refurb: Modernizes older idiom patterns to modern Python standards
-    "T20",  # (flake8-print): Disallows print() statements in production code. Useful if you want to force all output through logging or dedicated output pipelines.
-    "LOG",  # (flake8-logging): Flags logging anti-patterns (such as string formatting inside logger calls instead of passing lazy arguments).
-    "TCH",  # (flake8-type-checking): Automatically moves type-only imports behind if TYPE_CHECKING: blocks to reduce runtime import overhead.
+  "B",  # flake8-bugbear: likely bugs / footguns
+  "I",  # isort-style import checks
+  "UP",  # pyupgrade: modern Python syntax
+  "E",  # pycodestyle errors
+  "W",  # pycodestyle warnings
+  "F",  # Pyflakes (catches undefined variables, broken logic, unused imports)
+  "C90",  # mccabe: Cyclomatic complexity limits (keeps functions small and readable)
+  "N",  # pep8-naming: Enforces PEP 8 naming conventions (PascalCase classes, snake_case functions)
+  "ASYNC",  # flake8-async: Catches bad async programming practices and deadlocks
+  "S",  # flake8-bandit: Security auditing (e.g., hardcoded credentials, unsafe temp files)
+  "A",  # flake8-builtins: Prevents shadowing built-in names (e.g., re-defining `id`, `list`, or `format`)
+  "FA",  # flake8-future-annotations: Enforces modern postponed annotations behavior
+  "PIE",  # flake8-pie: Code simplification suggestions
+  "PT",  # flake8-pytest-style: Enforces idiomatic pytest fixture/assertion style
+  "RET",  # flake8-return: Simplifies return statements (removes unnecessary else/elif blocks)
+  "SIM",  # flake8-simplify: Refactors unnecessarily complex logic into cleaner idiomatic Python
+  "ARG",  # flake8-unused-arguments: Flags unused function arguments
+  "PTH",  # flake8-use-pathlib: Forces the use of modern `pathlib.Path` over legacy `os.path`
+  "PGH",  # pygrep-hooks: Prevents generic blanket `# type: ignore` or `# noqa` directives without specific error codes
+  "RUF",  # Ruff-specific rules: Catches edge-cases, invalid regexes, and native Ruff optimization hints
+  "PERF",  # Perflint: Highlights performance anti-patterns in loops and data structures
+  "FURB",  # refurb: Modernizes older idiom patterns to modern Python standards
+  "T20",  # (flake8-print): Disallows print() statements in production code. Useful if you want to force all output through logging or dedicated output pipelines.
+  "LOG",  # (flake8-logging): Flags logging anti-patterns (such as string formatting inside logger calls instead of passing lazy arguments).
+  "TC",  # (flake8-type-checking): Automatically moves type-only imports behind if TYPE_CHECKING: blocks to reduce runtime import overhead.
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -81,11 +87,3 @@ extend-select = [
 quote-style = "double"
 indent-style = "space"
 docstring-code-format = true
-
-[dependency-groups]
-dev = [
-    "pyrefly>=1.1.1",
-    "pytest>=9.1.1",
-    "ruff>=0.16.0",
-    "rust-just>=1.57.0",
-]
