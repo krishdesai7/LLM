@@ -131,6 +131,11 @@ In chat: `/model` (reopens the picker, keeps your history), `/system`,
 `/clear`, `/history`, `/save`, `/web`, `/markdown`, `/temp`, `/providers`,
 `/exit`. Enter sends; alt+enter inserts a newline.
 
+Every request starts with a short built-in preamble giving today's date (and,
+with `/web` on, guidance on using the search tools). A `--system`/`/system`
+prompt is appended after it rather than replacing it. The text lives in
+`PREAMBLE`/`WEB_PREAMBLE` in `src/llm/chat.py`.
+
 ## Config
 
 `llm init` writes `$XDG_CONFIG_HOME/llm/config.toml`, falling back to
