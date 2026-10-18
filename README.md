@@ -110,6 +110,31 @@ address. Loopback, private ranges, and link-local (including the cloud
 metadata endpoint) are blocked, and every redirect hop is re-checked. The
 model picks those URLs, often from a page it just read, so a prompt injected into that page shouldn't be able to aim the fetcher at your network. Responses are capped at 2 MB and truncated to 6,000 characters of text.
 
+**Reddit** turns away scripted requests (a JavaScript challenge, a login wall,
+or a 403), so Reddit links take their own route. With `LLM_REDDIT_URL` pointing
+at a self-hosted [Redlib](https://github.com/redlib-org/redlib), threads come
+back in full as a comment tree, truncated at 12,000 characters. Without it, or if
+Redlib is down, they fall back to Reddit's RSS feeds, which allow about one page
+a minute and carry only some comments. `llm web` shows which route is active.
+
+Redlib's crates.io release is stale and gets 403s; build from `main`
+(needs `cmake`, e.g. `uv tool install cmake`):
+
+```shell
+cargo install --git https://github.com/redlib-org/redlib --locked
+echo 'LLM_REDDIT_URL=http://127.0.0.1:8089' >> .env
+```
+
+You don't need to run it yourself. When `LLM_REDDIT_URL` is a loopback address
+with a port, nothing is answering there, and `redlib` is on your `PATH`, the
+first Reddit link of a session starts it (about 2 seconds) and it's stopped
+when the session ends. If it's already running, say from another session or
+a service you've set up, that one is used instead.
+
+Redlib reads Reddit by presenting itself as Reddit's official app, which is
+against Reddit's terms. No account is involved, but expect it to break
+occasionally when Reddit changes something; rebuilding from `main` is the fix.
+
 Note that some providers also do search _their_ side (`web_search_options` on OpenAI, sonar models on Perplexity, `:online` on OpenRouter). That's a different mechanism, spelled differently by each one. This client-side loop works identically everywhere instead.
 
 ## Commands

@@ -31,7 +31,9 @@ __all__ = [
     "active_backend",
     "backends",
     "fetch",
+    "get_guarded",
     "search",
+    "truncate",
 ]
 
 USER_AGENT = "llm-cli/0.1 (+https://github.com/)"
@@ -126,15 +128,29 @@ def search(query: str, *, count: int = DEFAULT_RESULTS) -> list[Result]:
         raise WebError(msg) from exc
 
 
-def fetch(url: str, *, max_chars: int = DEFAULT_PAGE_CHARS) -> str:
-    """Download ``url`` and return it as readable plain text."""
-    response = _get_guarded(url)
+def fetch(url: str, *, max_chars: int | None = None) -> str:
+    """Download ``url`` and return it as readable plain text.
+
+    ``max_chars`` defaults per site: Reddit threads get more room.
+    """
+    from . import reddit  # imports this module, so it cannot sit at the top
+
+    if reddit.handles(url):
+        return reddit.fetch(url, max_chars=max_chars or reddit.REDDIT_PAGE_CHARS)
+    response = get_guarded(url)
     content_type = response.headers.get("content-type", "")
     body = response.text
     text = body if "html" not in content_type.lower() else html_to_text(body)
     text = text.strip()
     if not text:
-        return "(the page returned no readable text)"
+        return (
+            "(the page returned no readable text: it may need JavaScript, "
+            "or be refusing automated requests)"
+        )
+    return truncate(text, max_chars or DEFAULT_PAGE_CHARS)
+
+
+def truncate(text: str, max_chars: int) -> str:
     if len(text) > max_chars:
         return f"{text[:max_chars]}\n\n[truncated at {max_chars} characters]"
     return text
@@ -143,7 +159,7 @@ def fetch(url: str, *, max_chars: int = DEFAULT_PAGE_CHARS) -> str:
 # -- HTTP with a guard ------------------------------------------------------
 
 
-def _get_guarded(url: str) -> httpx.Response:
+def get_guarded(url: str) -> httpx.Response:
     """GET ``url``, re-checking every redirect hop against the address guard."""
     current = url
     with httpx.Client(

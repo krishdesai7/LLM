@@ -122,7 +122,9 @@ FETCH_URL = Tool(
     name="fetch_url",
     description=(
         "Download a public http(s) URL and return its readable text, "
-        "truncated if long. Use it to read a page found via web_search."
+        "truncated if long. Use it to read a page found via web_search. "
+        "Reddit links work too and return the post with its comment tree "
+        "(scores in brackets, replies indented)."
     ),
     parameters={
         "type": "object",

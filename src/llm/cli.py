@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import typer
 from openai import OpenAIError
 
-from . import catalog, repl, tools, ui
+from . import catalog, reddit, repl, tools, ui
 from . import web as webmod
 from .chat import ChatSession
 from .registry import LLMError, Registry, config_path
@@ -203,6 +203,7 @@ def web_command(
     if not query:
         ui.console.print(ui.search_table())
         ui.console.print(f"\n[meta]{ui.search_status()}[/meta]")
+        ui.console.print(f"[meta]{reddit.status()}[/meta]")
         ui.console.print(
             "[meta]override with LLM_SEARCH_BACKEND=<name>[/meta]",
         )
@@ -218,8 +219,11 @@ def web_command(
 def fetch(
     url: Annotated[str, typer.Argument(help="A public http(s) URL.")],
     chars: Annotated[
-        int, typer.Option("--chars", help="Truncate the extracted text.")
-    ] = webmod.DEFAULT_PAGE_CHARS,
+        int | None,
+        typer.Option(
+            "--chars", help="Truncate the extracted text.", show_default=False
+        ),
+    ] = None,
 ) -> None:
     """Print a page as the model would see it. Useful for checking extraction."""
     try:
