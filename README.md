@@ -173,7 +173,7 @@ Built in:
 - ollama
 - lmstudio
 
-The two local ones need no key.
+The two local ones (`ollama`, `lmstudio`) need no key.
 
 ## Library use
 
