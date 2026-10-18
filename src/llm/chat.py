@@ -9,6 +9,7 @@ network itself.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
@@ -31,6 +32,27 @@ DeltaKind = Literal["text", "reasoning", "tool_call", "tool_result", "notice"]
 #: Ceiling on tool round-trips per turn, so a confused model cannot loop away
 #: your tokens forever.
 MAX_TOOL_ROUNDS = 6
+
+#: Sent ahead of every conversation. Without the date, models assume it is
+#: still their training cutoff and dismiss genuinely recent results as bogus.
+PREAMBLE = (
+    "Today is {today}. Your training data ends before that, so things may "
+    "have changed since; do not assume it is still the year your training "
+    "suggests. Answer directly, and say so when you are unsure or when a "
+    "question depends on information newer than you have."
+)
+
+#: Appended to the preamble while the web tools are on.
+WEB_PREAMBLE = (
+    "You have web_search and fetch_url tools that see the live web as of "
+    "today. Dates in their results that are later than your training data "
+    "are real, not errors: trust them over your own sense of the present. Use "
+    "the tools for anything recent or that you would otherwise be guessing "
+    "at, and skip them for stable facts. One or two targeted searches are "
+    "usually enough; prefer reading an authoritative source (official docs, "
+    "release notes, the project's own site) over searching again. Cite the "
+    "URLs you relied on."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,9 +162,21 @@ class ChatSession:
         self.messages.clear()
         self.last_usage = None
 
+    def system_prompt(self) -> str:
+        """The preamble, plus the user's own system prompt if one is set.
+
+        Rebuilt on every request so it tracks ``/web`` and the calendar.
+        """
+        parts = [PREAMBLE.format(today=_long_date(_today()))]
+        if self.tools:
+            parts.append(WEB_PREAMBLE)
+        if self.system:
+            parts.append(self.system)
+        return "\n\n".join(parts)
+
     def payload(self) -> list[ChatCompletionMessageParam]:
-        head = [Message("system", self.system)] if self.system else []
-        return [message.as_param() for message in (*head, *self.messages)]
+        head = Message("system", self.system_prompt())
+        return [message.as_param() for message in (head, *self.messages)]
 
     def send(self, prompt: str) -> str:
         """Run a whole turn and return just the reply text."""
@@ -296,6 +330,15 @@ def _usage_of(response: Any) -> Usage | None:
         prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
         completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
     )
+
+
+def _today() -> date:
+    return date.today()
+
+
+def _long_date(day: date) -> str:
+    """``Sunday, October 18, 2026``: unambiguous, unlike 10/18 vs 18/10."""
+    return f"{day:%A, %B} {day.day}, {day:%Y}"
 
 
 def _compact(arguments: str, limit: int = 80) -> str:

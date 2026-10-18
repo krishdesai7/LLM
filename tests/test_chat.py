@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import pytest
 from conftest import FakeChunk, calls_of
+
+from llm import chat
+from llm.tools import WEB_SEARCH, ToolBox
 
 
 def test_stream_yields_reasoning_and_text(make_session: Any) -> None:
@@ -44,12 +48,33 @@ def test_no_tools_are_advertised_by_default(make_session: Any) -> None:
     assert "tools" not in calls_of(session)[0]
 
 
-def test_system_prompt_leads_the_payload(make_session: Any) -> None:
-    session = make_session(system="be terse")
+@pytest.fixture
+def frozen_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(chat, "_today", lambda: date(2026, 10, 18))
+
+
+@pytest.mark.usefixtures("frozen_today")
+def test_preamble_with_the_date_leads_every_payload(make_session: Any) -> None:
+    session = make_session()
     list(session.stream("hi"))
     sent = calls_of(session)[0]["messages"]
-    assert sent[0] == {"role": "system", "content": "be terse"}
+    assert sent[0]["role"] == "system"
+    assert "Today is Sunday, October 18, 2026." in sent[0]["content"]
     assert sent[1] == {"role": "user", "content": "hi"}
+
+
+def test_user_system_prompt_follows_the_preamble(make_session: Any) -> None:
+    session = make_session(system="be terse")
+    prompt = session.system_prompt()
+    assert prompt.startswith("Today is")
+    assert prompt.endswith("\n\nbe terse")
+
+
+def test_web_guidance_only_while_tools_are_on(make_session: Any) -> None:
+    session = make_session()
+    assert "web_search" not in session.system_prompt()
+    session.tools = ToolBox([WEB_SEARCH])
+    assert "web_search" in session.system_prompt()
 
 
 def test_params_are_forwarded(make_session: Any) -> None:
@@ -63,7 +88,7 @@ def test_multi_turn_context_is_accumulated(make_session: Any) -> None:
     list(session.stream("first"))
     list(session.stream("second"))
     sent = calls_of(session)[1]["messages"]
-    assert [m["role"] for m in sent] == ["user", "assistant", "user"]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
 
 
 def test_clear_resets_the_conversation(make_session: Any) -> None:
