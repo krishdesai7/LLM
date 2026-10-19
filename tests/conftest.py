@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from llm.chat import ChatSession
 from llm.registry import ModelRef, Provider, Registry
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 PROVIDER = Provider("fake", "FAKE_API_KEY", "https://fake.test/v1")
 REF = ModelRef(PROVIDER, "fake-1")
@@ -80,6 +84,45 @@ class FakeClient:
     def __init__(self, rounds: list[list[FakeChunk]]) -> None:
         self.completions = FakeCompletions(rounds)
         self.chat = type("_Chat", (), {"completions": self.completions})()
+
+
+class GatedStream:
+    """Replays chunks, pausing before any chunk that has a gate."""
+
+    def __init__(self, chunks: list[Any], round_no: int, client: GatedClient) -> None:
+        self._chunks = chunks
+        self._round = round_no
+        self._client = client
+
+    def __iter__(self) -> Any:
+        for index, chunk in enumerate(self._chunks):
+            key = (self._round, index)
+            if key in self._client.gates:
+                self._client.reached[key].set()
+                assert self._client.gates[key].wait(5), f"gate {key} never opened"
+            yield chunk
+
+    def close(self) -> None:
+        pass
+
+
+class GatedClient(FakeClient):
+    """A fake client whose streams can be paused at ``(round, chunk)`` gates."""
+
+    def __init__(
+        self, rounds: list[list[Any]], gates: Sequence[tuple[int, int]] = ()
+    ) -> None:
+        super().__init__(rounds)
+        self.rounds = rounds
+        self.gates = {key: threading.Event() for key in gates}
+        self.reached = {key: threading.Event() for key in gates}
+        self.completions.create = self._create  # type: ignore[method-assign]
+        self._calls = 0
+
+    def _create(self, **_kwargs: Any) -> GatedStream:
+        index = min(self._calls, len(self.rounds) - 1)
+        self._calls += 1
+        return GatedStream(self.rounds[index], index, self)
 
 
 def text_chunk(text: str) -> FakeChunk:

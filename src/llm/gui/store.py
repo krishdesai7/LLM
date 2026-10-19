@@ -26,6 +26,7 @@ __all__ = [
     "Settings",
     "StoredChat",
     "default_root",
+    "title_of",
 ]
 
 _ID = re.compile(r"[0-9A-Za-z_-]+")
@@ -103,7 +104,7 @@ class ChatStore:
         found = [
             ChatSummary(
                 stored.id,
-                _title_of(stored.messages),
+                title_of(stored.messages),
                 stored.updated,
                 stored.settings.model,
             )
@@ -218,25 +219,31 @@ def _parse(path: Path) -> StoredChat | None:
 
 
 def _without_dangling_tool_calls(messages: list[Message]) -> list[Message]:
-    """Cut at the first assistant tool request whose results are incomplete.
+    """Drop every assistant tool request whose results are incomplete.
 
     The API rejects a ``tool_calls`` message without a reply to each call, which
-    is what a stop or crash mid-tool-run leaves behind.
+    is what a stop or crash mid-tool-run leaves behind. Only that request and
+    its partial results go; messages after it (the user resumed) are kept.
     """
-    for index, message in enumerate(messages):
+    kept: list[Message] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        index += 1
         if not message.tool_calls:
+            kept.append(message)
             continue
-        answered = set()
-        for following in messages[index + 1 :]:
-            if following.role != "tool":
-                break
-            answered.add(following.tool_call_id)
-        if not {call.id for call in message.tool_calls} <= answered:
-            return messages[:index]
-    return messages
+        results: list[Message] = []
+        while index < len(messages) and messages[index].role == "tool":
+            results.append(messages[index])
+            index += 1
+        answered = {result.tool_call_id for result in results}
+        if {call.id for call in message.tool_calls} <= answered:
+            kept.extend([message, *results])
+    return kept
 
 
-def _title_of(messages: list[Message]) -> str:
+def title_of(messages: list[Message]) -> str:
     first = next((m.content for m in messages if m.role == "user"), "")
     flat = " ".join(first.split())
     if not flat:

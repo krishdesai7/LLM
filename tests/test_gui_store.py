@@ -160,3 +160,23 @@ def test_default_root_honours_xdg_data_home(
 ) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     assert default_root() == tmp_path / "llm" / "chats"
+
+
+def test_a_dangling_tool_run_in_the_middle_keeps_later_messages(
+    store: ChatStore,
+) -> None:
+    """After a crash, the user resumes and keeps chatting; that must survive."""
+    chat_id = store.create(SETTINGS)
+    for message in (
+        Message("user", "first"),
+        Message("assistant", "", [_call("c1"), _call("c2")]),
+        Message("tool", "r", tool_call_id="c1"),
+        Message("user", "second"),
+        Message("assistant", "reply"),
+    ):
+        store.append_message(chat_id, message)
+    assert [(m.role, m.content) for m in store.load(chat_id).messages] == [
+        ("user", "first"),
+        ("user", "second"),
+        ("assistant", "reply"),
+    ]
