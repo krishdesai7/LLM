@@ -264,3 +264,63 @@ def test_lone_surrogates_in_model_text_do_not_break_appends(store: ChatStore) ->
         "a?b",
         "still works",
     ]
+
+
+@pytest.fixture
+def parses(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The chat files read from disk, in order."""
+    from llm.gui import store as store_module
+
+    seen: list[str] = []
+    real = store_module._parse
+
+    def counting(path: Path) -> object:
+        seen.append(path.stem)
+        return real(path)
+
+    monkeypatch.setattr(store_module, "_parse", counting)
+    return seen
+
+
+def test_unchanged_chats_are_not_reread_for_the_sidebar(
+    store: ChatStore, parses: list[str]
+) -> None:
+    chat_id = store.create(SETTINGS)
+    store.append_message(chat_id, Message("user", "hello"))
+    first = store.summaries()
+    parses.clear()
+    assert store.summaries() == first
+    assert parses == []
+
+
+def test_only_the_changed_chat_is_reread(store: ChatStore, parses: list[str]) -> None:
+    quiet = store.create(SETTINGS)
+    busy = store.create(SETTINGS)
+    store.summaries()
+    store.append_message(busy, Message("user", "now with a title"))
+    parses.clear()
+    titles = {s.id: s.title for s in store.summaries()}
+    assert parses == [busy]
+    assert titles[busy] == "now with a title"
+    assert titles[quiet] == "New chat"
+
+
+def test_unusable_files_are_not_reread_either(
+    store: ChatStore, tmp_path: Path, parses: list[str]
+) -> None:
+    good = store.create(SETTINGS)
+    (tmp_path / "chats" / "garbage.jsonl").write_bytes(b"\xff\xfe\x00\x01")
+    store.summaries()
+    parses.clear()
+    assert [s.id for s in store.summaries()] == [good]
+    assert parses == []
+
+
+def test_a_deleted_chat_leaves_the_sidebar_and_a_new_one_joins(
+    store: ChatStore,
+) -> None:
+    gone = store.create(SETTINGS)
+    store.summaries()
+    store.delete(gone)
+    fresh = store.create(SETTINGS)
+    assert [s.id for s in store.summaries()] == [fresh]

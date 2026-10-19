@@ -76,6 +76,9 @@ class ChatStore:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        # path stem -> (mtime_ns, size) it was read at, and what it summarised to
+        # (None: not a usable chat). Lets the sidebar skip files that didn't change.
+        self._seen: dict[str, tuple[tuple[int, int], ChatSummary | None]] = {}
 
     def create(self, settings: Settings) -> str:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -99,20 +102,42 @@ class ChatStore:
         return stored
 
     def summaries(self) -> list[ChatSummary]:
-        """Every readable chat, most recently updated first."""
+        """Every readable chat, most recently updated first.
+
+        Only files whose size or mtime changed since the last call are re-read.
+        """
         if not self.root.is_dir():
+            self._seen = {}
             return []
-        found = [
-            ChatSummary(
+        seen: dict[str, tuple[tuple[int, int], ChatSummary | None]] = {}
+        for path in self.root.glob("*.jsonl"):
+            if _ID.fullmatch(path.stem) and (entry := self._entry(path)) is not None:
+                seen[path.stem] = entry
+        self._seen = seen
+        found = [summary for _, summary in seen.values() if summary is not None]
+        return sorted(found, key=lambda summary: summary.updated, reverse=True)
+
+    def _entry(self, path: Path) -> tuple[tuple[int, int], ChatSummary | None] | None:
+        try:
+            info = path.stat()
+        except OSError:
+            return None
+        stamp = (info.st_mtime_ns, info.st_size)
+        known = self._seen.get(path.stem)
+        if known is not None and known[0] == stamp:
+            return known
+        stored = _parse(path)
+        summary = (
+            None
+            if stored is None
+            else ChatSummary(
                 stored.id,
                 title_of(stored.messages),
                 stored.updated,
                 stored.settings.model,
             )
-            for path in self.root.glob("*.jsonl")
-            if _ID.fullmatch(path.stem) and (stored := _parse(path)) is not None
-        ]
-        return sorted(found, key=lambda summary: summary.updated, reverse=True)
+        )
+        return stamp, summary
 
     def delete(self, chat_id: str) -> None:
         path = self._path(chat_id)

@@ -49,6 +49,7 @@ const state = {
   draft: { model: "", system: null, temperature: null, web: false }, // settings for a new chat
   turn: null, // Turn receiving live events for the open chat
   abort: null, // AbortController of the stream shown in this page
+  sending: false, // a prompt is being sent but its stream hasn't started
   armed: null, // chat id whose delete button has been clicked once
 };
 
@@ -305,10 +306,13 @@ async function readEvents(body, onEvent) {
 
 // Show a reply's events in the open chat. Leaving the chat only detaches this
 // reader; the reply carries on server-side.
-async function follow(path, body) {
+// `accepted` runs once the server has taken the request; `rejected(error)` runs instead if it
+// never did (a 4xx/5xx, or no connection), so the caller can undo what it showed optimistically.
+async function follow(path, body, { accepted = null, rejected = null } = {}) {
   const controller = new AbortController();
   state.abort = controller;
   const turn = state.turn;
+  let started = false;
   setBusy(true);
   try {
     const response = await fetch(path, {
@@ -318,11 +322,17 @@ async function follow(path, body) {
       signal: controller.signal,
     });
     if (!response.ok) throw await apiError(response);
+    started = true;
+    if (accepted) accepted();
     const finished = await readEvents(response.body, (event) => keepingPinned(() => turn.handle(event)));
     if (!finished) keepingPinned(() => turn.error("Connection lost. The reply may still be running; reopen this chat to reattach."));
   } catch (error) {
     if (error.name === "AbortError") return null;
     if (error instanceof ApiError && path.endsWith("/attach") && error.status === 404) return error;
+    if (!started && rejected) {
+      rejected(error);
+      return null;
+    }
     keepingPinned(() => turn.error(error.message));
   } finally {
     if (state.abort === controller) {
@@ -401,7 +411,17 @@ async function createChat() {
 
 async function send() {
   const prompt = els.prompt.value.trim();
-  if (!prompt || state.abort) return;
+  // `sending` covers the gap before follow() sets `abort`, so a second Enter can't start a second chat.
+  if (!prompt || state.abort || state.sending) return;
+  state.sending = true;
+  try {
+    await sendPrompt(prompt);
+  } finally {
+    state.sending = false;
+  }
+}
+
+async function sendPrompt(prompt) {
   try {
     if (!state.chat) await createChat();
   } catch (error) {
@@ -409,12 +429,24 @@ async function send() {
     return;
   }
   if (!els.column.querySelector(".user, .turn")) els.column.replaceChildren();
-  els.column.append(el("div", "user", prompt));
-  els.prompt.value = "";
-  autosize();
-  state.turn = new Turn(els.column);
+  const bubble = el("div", "user", prompt);
+  els.column.append(bubble);
+  const turn = new Turn(els.column);
+  state.turn = turn;
   els.box.scrollTop = els.box.scrollHeight;
-  await follow(`/api/chats/${encodeURIComponent(state.chat.id)}/reply`, { prompt, owner: OWNER });
+  await follow(`/api/chats/${encodeURIComponent(state.chat.id)}/reply`, { prompt, owner: OWNER }, {
+    // The text stays in the box until the server has it, so a refusal loses nothing.
+    accepted() {
+      if (els.prompt.value.trim() === prompt) els.prompt.value = "";
+      autosize();
+    },
+    rejected(error) {
+      bubble.remove();
+      turn.root.remove();
+      if (state.turn === turn) state.turn = null;
+      flash(error.message);
+    },
+  });
 }
 
 async function stop() {
