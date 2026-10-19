@@ -133,6 +133,23 @@ def _echo_stream(session: ChatSession, prompt: str) -> None:
 
 
 @app.command()
+def gui(
+    model: ModelOpt = None,
+    port: Annotated[int, typer.Option("--port", help="Port on 127.0.0.1.")] = 8765,
+    no_open: Annotated[
+        bool, typer.Option("--no-open", help="Print the link; don't open a browser.")
+    ] = False,
+) -> None:
+    """Chat in the browser: past chats, collapsible thinking, rendered markdown."""
+    from .gui import launch
+
+    try:
+        launch.serve(Registry.load(), model=model, port=port, open_browser=not no_open)
+    except LLMError as exc:
+        _die(exc)
+
+
+@app.command()
 def models(
     provider: Annotated[
         str | None, typer.Argument(help="Provider name. Omit for every ready one.")
