@@ -2,26 +2,31 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from conftest import GatedClient, default_round
+from conftest import REF, GatedClient, default_round
 from litestar.testing import TestClient
 
 from llm import catalog
+from llm.chat import ChatSession
 from llm.gui.app import create_app
-from llm.gui.runs import RunManager
+from llm.gui.runs import ChatRun, RunManager
 from llm.gui.security import COOKIE
-from llm.gui.store import ChatStore
+from llm.gui.store import ChatStore, Settings
 from llm.registry import Registry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from litestar import Litestar
 
@@ -355,23 +360,31 @@ def test_deleting_a_chat_cancels_its_reply(
 
 
 def test_a_page_that_stops_heartbeating_has_its_reply_cancelled(
-    fake_registry: Registry, store: ChatStore, script: Script
+    fake_registry: Registry, store: ChatStore
 ) -> None:
-    script.gates = [(0, 0)]
+    """With no stream open and no heartbeat, the background reaper steps in."""
+    gated = GatedClient([default_round()], gates=[(0, 0)])
     runs = RunManager(grace_seconds=0.05)
     app = create_app(
         fake_registry, store, LAUNCH_KEY, PORT, runs=runs, reap_interval=0.01
     )
-    with _client(app) as client:
-        chat_id = _new_chat(client)
-        first = _reply(app, chat_id)
-        script.reached((0, 0))
+    chat_id = store.create(Settings("fake/fake-1"))
+    with _client(app):  # runs the app's lifespan, which owns the reaper
+        session = ChatSession(ref=REF, client=gated)  # type: ignore[arg-type]
+        run = runs.start(chat_id, session, store, "hi", "page-1")
         deadline = time.monotonic() + 5
-        while not (run := runs.get(chat_id)) or not run.cancelled:
+        while not run.cancelled:
             assert time.monotonic() < deadline, "reply was never cancelled"
             time.sleep(0.01)
-        script.open((0, 0))
-        assert _events(first.join())[-1]["cancelled"] is True
+        gated.gates[0, 0].set()
+        assert _collect_events(run)[-1]["cancelled"] is True
+
+
+def _collect_events(run: ChatRun) -> list[dict[str, Any]]:
+    async def gather() -> list[dict[str, Any]]:
+        return [event async for event in run.subscribe()]
+
+    return asyncio.run(asyncio.wait_for(gather(), timeout=10))
 
 
 def test_heartbeat_is_204(client: TestClient[Litestar]) -> None:
@@ -444,3 +457,53 @@ def test_the_store_directory_is_created_on_first_use(
     client = _client(create_app(fake_registry, store, LAUNCH_KEY, PORT))
     assert client.get("/api/chats").json() == []
     assert _new_chat(client)
+
+
+def test_the_page_forbids_inline_scripts_and_remote_loads(
+    client: TestClient[Litestar],
+) -> None:
+    page = client.get("/").text
+    assert "Content-Security-Policy" in page
+    assert "default-src 'none'" in page
+    assert "script-src 'self'" in page
+    assert "connect-src 'self'" in page
+    # every <script> loads a file; none carries code inline
+    assert not re.search(r"<script(?![^>]*\bsrc=)", page)
+
+
+def test_vendored_libraries_match_the_hashes_in_their_readme() -> None:
+    vendor = Path(__file__).parents[1] / "src" / "llm" / "gui" / "static" / "vendor"
+    rows = re.findall(
+        r"\| `([^`]+)` \|.*\| `([^`]+=)` \|", (vendor / "README.md").read_text()
+    )
+    assert {name for name, _ in rows} == {"marked.umd.js", "purify.min.js"}
+    for name, expected in rows:
+        digest = base64.b64encode(hashlib.sha256((vendor / name).read_bytes()).digest())
+        assert digest.decode() == expected, name
+
+
+def test_attaching_hands_the_reply_to_the_new_page(
+    fake_registry: Registry, store: ChatStore, script: Script
+) -> None:
+    """After a reload the page has a new id; the reply must follow it."""
+    script.gates = [(0, 1)]
+    runs = RunManager()
+    app = create_app(fake_registry, store, LAUNCH_KEY, PORT, runs=runs)
+    client = _client(app)
+    chat_id = _new_chat(client)
+    first = _reply(app, chat_id)
+    script.reached((0, 1))
+    assert runs.get(chat_id).owner == OWNER  # type: ignore[union-attr]
+    attached = Background(
+        app,
+        lambda c: c.post(
+            f"/api/chats/{chat_id}/attach", json={"after": 0, "owner": "page-2"}
+        ),
+    )
+    deadline = time.monotonic() + 5
+    while runs.get(chat_id).owner != "page-2":  # type: ignore[union-attr]
+        assert time.monotonic() < deadline, "ownership never moved"
+        time.sleep(0.01)
+    script.open((0, 1))
+    first.join()
+    attached.join()

@@ -19,7 +19,6 @@ from openai import OpenAIError
 
 from ..chat import Message
 from ..registry import LLMError
-from .store import ChatNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -62,6 +61,7 @@ class ChatRun:
         self.events: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._waiters: list[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = []
+        self._listeners = 0
         self._cancel = threading.Event()
         self._done = threading.Event()
         self._thread = threading.Thread(
@@ -75,6 +75,12 @@ class ChatRun:
     @property
     def cancelled(self) -> bool:
         return self._cancel.is_set()
+
+    @property
+    def listening(self) -> bool:
+        """Whether any page has this reply's stream open right now."""
+        with self._lock:
+            return self._listeners > 0
 
     def start(self) -> None:
         self._thread.start()
@@ -90,6 +96,7 @@ class ChatRun:
         entry = (loop, wake)
         with self._lock:
             self._waiters.append(entry)
+            self._listeners += 1
         index = max(after, 0)
         try:
             while True:
@@ -109,6 +116,7 @@ class ChatRun:
         finally:
             with self._lock:
                 self._waiters.remove(entry)
+                self._listeners -= 1
 
     # -- worker thread --------------------------------------------------------
 
@@ -133,21 +141,44 @@ class ChatRun:
             self._finish(persisted)
 
     def _finish(self, persisted: int) -> None:
+        """Save what is left and end the run. ``done`` is sent no matter what."""
         try:
+            self._answer_unrun_tool_calls()
             self._flush(persisted)
-        except (OSError, ChatNotFoundError) as exc:
+        # ruff: ignore[blind-except] - nothing may stop the run ending with `done`
+        except Exception as exc:
             self._emit({"type": "error", "text": f"could not save chat: {exc}"})
-        usage = self.session.last_usage
-        if usage is not None and usage.total:
-            self._emit(
-                {
-                    "type": "usage",
-                    "prompt": usage.prompt_tokens,
-                    "completion": usage.completion_tokens,
-                }
-            )
-        self._emit({"type": "done", "cancelled": self._cancel.is_set()})
-        self._done.set()
+        finally:
+            usage = self.session.last_usage
+            if usage is not None and usage.total:
+                self._emit(
+                    {
+                        "type": "usage",
+                        "prompt": usage.prompt_tokens,
+                        "completion": usage.completion_tokens,
+                    }
+                )
+            self._emit({"type": "done", "cancelled": self._cancel.is_set()})
+            self._done.set()
+
+    def _answer_unrun_tool_calls(self) -> None:
+        """Reply to tool requests that Stop (or an error) cut off before they ran.
+
+        The API rejects a request whose last assistant message asks for tools
+        that were never answered, which would break every later reply in this
+        chat for as long as the session lives.
+        """
+        messages = self.session.messages
+        last = next(
+            (i for i in reversed(range(len(messages))) if messages[i].tool_calls), None
+        )
+        if last is None:
+            return
+        answered = {m.tool_call_id for m in messages[last + 1 :] if m.role == "tool"}
+        for call in messages[last].tool_calls:
+            if call.id not in answered:
+                note = "Error: cancelled before this tool ran"
+                messages.append(Message("tool", note, tool_call_id=call.id))
 
     def _flush(self, persisted: int) -> int:
         """Append any session messages not yet on disk; return the new count."""
@@ -221,5 +252,12 @@ class RunManager:
             runs = [run for run in self._runs.values() if not run.finished]
             beats = dict(self._beats)
         for run in runs:
+            if run.listening:
+                continue  # a page with the stream open is there, timers or not
             if now - beats.get(run.owner, 0.0) > self._grace:
                 run.cancel()
+
+    def adopt(self, run: ChatRun, owner: str) -> None:
+        """Hand a reply to the page that has just attached to it."""
+        run.owner = owner
+        self.heartbeat(owner)

@@ -93,6 +93,9 @@ def _run_server(port: int) -> None:
 
 def _ensure_free(port: int) -> None:
     with socket.socket() as probe:
+        # As the server will: connections lingering from a previous run (TIME_WAIT)
+        # must not make the port look taken.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((HOST, port))
         except OSError as exc:

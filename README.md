@@ -175,6 +175,37 @@ with `/web` on, guidance on using the search tools). A `--system`/`/system`
 prompt is appended after it rather than replacing it. The text lives in
 `PREAMBLE`/`WEB_PREAMBLE` in `src/llm/chat.py`.
 
+## Chat GUI
+
+```shell
+uv run llm gui                       # serves http://127.0.0.1:8765 and opens it
+uv run llm gui -mkimi-k3 --port 9000 --no-open
+```
+
+The same engine as `llm chat` (models, web search, Reddit, the date preamble)
+in a browser tab, for the parts a terminal is bad at:
+
+- **Past chats** live in a sidebar, grouped by day; click one to read it or keep going.
+- **Thinking** is a collapsible block with its duration. It stays open while the
+  model reasons and folds away when the answer starts. Click one to toggle it, or use
+  the _Thinking_ button / <kbd>Alt</kbd>+<kbd>T</kbd> for all of them.
+- **Markdown** is rendered as it streams, sanitised before it reaches the page
+  (model output can include text from pages it fetched), with images and inline
+  styles stripped and a content-security policy that forbids inline script.
+- **Replies keep running** when you switch to another chat; the sidebar marks busy
+  ones. _Stop_ cancels a reply, and so does closing the tab (after ~15 s), keeping
+  what had arrived.
+- **Settings** (model, system prompt, temperature, web on/off) are per chat, in the header.
+
+Chats are saved as one JSON Lines file each in `$XDG_DATA_HOME/llm/chats/`
+(`~/.local/share/llm/chats/` by default), appended to as the conversation
+goes, so a crash costs at most the last line.
+
+It listens on `127.0.0.1` only. The link `llm gui` prints carries a random
+per-launch token; requests without it, from another origin, or for another
+hostname are refused. That protects you from other websites, not from other
+processes on your Mac. `llm chat` and `llm ask` are unaffected.
+
 ## Config
 
 `llm init` writes `$XDG_CONFIG_HOME/llm/config.toml`, falling back to
@@ -262,6 +293,9 @@ session.tools = ToolBox([*web_toolbox().tools, clock])
 model can recover instead of the turn dying.
 
 ## Development
+
+The project pins Python 3.14 (`.python-version`): the GUI's dependencies
+(Litestar needs `pyyaml`) don't all ship 3.15 wheels yet.
 
 ```shell
 uv format

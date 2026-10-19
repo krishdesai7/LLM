@@ -30,6 +30,7 @@ __all__ = [
 ]
 
 _ID = re.compile(r"[0-9A-Za-z_-]+")
+_ROLES = ("system", "user", "assistant", "tool")
 _TITLE_CHARS = 60
 
 
@@ -131,12 +132,27 @@ class ChatStore:
         path = self._path(chat_id)
         if not path.is_file():
             raise ChatNotFoundError(chat_id)
+        # A crash mid-write leaves a line with no newline; start on a fresh line
+        # rather than gluing this record onto the fragment.
+        lead = "\n" if _ends_mid_line(path) else ""
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(_line(record))
+            handle.write(lead + _line(record))
 
 
 def _line(record: dict[str, Any]) -> str:
-    return json.dumps(record, ensure_ascii=False) + "\n"
+    # Lone surrogates (a split emoji pair from a provider) cannot be encoded;
+    # they become "?" instead of failing the write.
+    flat = json.dumps(record, ensure_ascii=False) + "\n"
+    return flat.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def _ends_mid_line(path: Path) -> bool:
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            return False
+        handle.seek(-1, os.SEEK_END)
+        return handle.read(1) != b"\n"
 
 
 def _settings_to_dict(settings: Settings) -> dict[str, Any]:
@@ -164,14 +180,67 @@ def _message_to_dict(message: Message) -> dict[str, Any]:
     }
 
 
+def _text(value: Any) -> str:
+    """A string field; ``null`` reads as empty, anything else is damage."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        msg = f"expected text, got {type(value).__name__}"
+        raise TypeError(msg)
+    return value
+
+
+def _number(value: Any, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        msg = f"expected a number, got {type(value).__name__}"
+        raise TypeError(msg)
+    return float(value)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _tool_call_from_dict(raw: Any) -> ToolCall:
+    if not isinstance(raw, dict):
+        msg = "a tool call must be an object"
+        raise TypeError(msg)
+    return ToolCall(
+        id=_text(raw["id"]), name=_text(raw["name"]), arguments=_text(raw["arguments"])
+    )
+
+
 def _message_from_dict(record: dict[str, Any]) -> Message:
+    role = record["role"]
+    calls = record.get("tool_calls") or []
+    if role not in _ROLES or not isinstance(calls, list):
+        msg = "not a message"
+        raise ValueError(msg)
+    call_id = record.get("tool_call_id")
     return Message(
-        role=record["role"],
-        content=record.get("content", ""),
-        tool_calls=[ToolCall(**call) for call in record.get("tool_calls") or []],
-        tool_call_id=record.get("tool_call_id"),
-        reasoning=record.get("reasoning", ""),
-        reasoning_seconds=record.get("reasoning_seconds", 0.0),
+        role=role,
+        content=_text(record.get("content")),
+        tool_calls=[_tool_call_from_dict(call) for call in calls],
+        tool_call_id=None if call_id is None else _text(call_id),
+        reasoning=_text(record.get("reasoning")),
+        reasoning_seconds=_number(record.get("reasoning_seconds"), 0.0),
+    )
+
+
+def _settings_from_dict(record: dict[str, Any]) -> Settings:
+    model = record["model"]
+    if not isinstance(model, str) or not model:
+        msg = "a model name is required"
+        raise ValueError(msg)
+    system = record.get("system")
+    temperature = record.get("temperature")
+    return Settings(
+        model=model,
+        system=None if system is None else _text(system),
+        temperature=None if temperature is None else _number(temperature, 0.0),
+        web=bool(record.get("web")),
     )
 
 
@@ -195,12 +264,7 @@ def _parse(path: Path) -> StoredChat | None:
                     return None
                 meta = record
             elif kind == "settings":
-                settings = Settings(
-                    model=record["model"],
-                    system=record.get("system"),
-                    temperature=record.get("temperature"),
-                    web=bool(record.get("web", False)),
-                )
+                settings = _settings_from_dict(record)
             elif kind == "message":
                 messages.append(_message_from_dict(record))
         except ValueError, KeyError, TypeError:
@@ -211,7 +275,9 @@ def _parse(path: Path) -> StoredChat | None:
         return None
     return StoredChat(
         id=path.stem,
-        created=float(meta.get("created", updated)),
+        created=_number(meta.get("created"), updated)
+        if _is_number(meta.get("created"))
+        else updated,
         updated=updated,
         settings=settings,
         messages=_without_dangling_tool_calls(messages),

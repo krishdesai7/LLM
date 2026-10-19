@@ -180,3 +180,87 @@ def test_a_dangling_tool_run_in_the_middle_keeps_later_messages(
         ("user", "second"),
         ("assistant", "reply"),
     ]
+
+
+def test_an_append_after_a_truncated_last_line_is_not_swallowed(
+    store: ChatStore, tmp_path: Path
+) -> None:
+    """A crash mid-write leaves no newline; the next message must still load."""
+    chat_id = store.create(SETTINGS)
+    store.append_message(chat_id, Message("user", "first"))
+    path = tmp_path / "chats" / f"{chat_id}.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"type": "message", "role": "assis')
+    store.append_message(chat_id, Message("user", "after the crash"))
+    assert [m.content for m in store.load(chat_id).messages] == [
+        "first",
+        "after the crash",
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"type": "message", "role": "user", "content": 5}',
+        '{"type": "message", "role": "user", "content": ["x"]}',
+        '{"type": "message", "role": "assistant", "content": "x", "reasoning": 3}',
+        '{"type": "message", "role": "assistant", "reasoning_seconds": "a"}',
+        '{"type": "message", "role": "tool", "content": "x", "tool_call_id": 7}',
+        '{"type": "message", "role": "robot", "content": "x"}',
+        '{"type": "message", "role": "assistant", "tool_calls": [{"id": 1}]}',
+        '{"type": "message", "role": "assistant", "tool_calls": "nope"}',
+        '{"type": "settings", "model": 5}',
+        '{"type": "settings", "model": "fake/fake-1", "temperature": "hot"}',
+        "[1, 2, 3]",
+        '"just a string"',
+        "null",
+    ],
+)
+def test_wrongly_typed_lines_are_skipped_not_fatal(
+    store: ChatStore, tmp_path: Path, line: str
+) -> None:
+    good = store.create(SETTINGS)
+    store.append_message(good, Message("user", "fine"))
+    path = tmp_path / "chats" / f"{good}.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+    assert [m.content for m in store.load(good).messages] == ["fine"]
+    assert [s.id for s in store.summaries()] == [good]
+    assert store.load(good).settings == SETTINGS
+
+
+def test_a_null_content_message_does_not_break_listing(
+    store: ChatStore, tmp_path: Path
+) -> None:
+    chat_id = store.create(SETTINGS)
+    path = tmp_path / "chats" / f"{chat_id}.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"type": "message", "role": "user", "content": null}\n')
+    [summary] = store.summaries()
+    assert summary.title == "New chat"
+
+
+@pytest.mark.parametrize("created", ["null", '"yesterday"', "[1]"])
+def test_a_wrongly_typed_created_time_falls_back_to_the_file_time(
+    store: ChatStore, tmp_path: Path, created: str
+) -> None:
+    root = tmp_path / "chats"
+    root.mkdir()
+    (root / "odd-meta.jsonl").write_text(
+        f'{{"type": "meta", "id": "odd-meta", "created": {created}}}\n'
+        '{"type": "settings", "model": "fake/fake-1"}\n'
+        '{"type": "message", "role": "user", "content": "hi"}\n'
+    )
+    assert [s.id for s in store.summaries()] == ["odd-meta"]
+    assert store.load("odd-meta").created > 0
+
+
+def test_lone_surrogates_in_model_text_do_not_break_appends(store: ChatStore) -> None:
+    """Providers can split an escaped emoji pair across chunks."""
+    chat_id = store.create(SETTINGS)
+    store.append_message(chat_id, Message("assistant", "a\ud83db"))
+    store.append_message(chat_id, Message("user", "still works"))
+    assert [m.content for m in store.load(chat_id).messages] == [
+        "a?b",
+        "still works",
+    ]

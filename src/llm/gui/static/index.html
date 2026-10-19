@@ -1,5 +1,73 @@
 <!doctype html>
 <html lang="en">
-<meta charset="utf-8">
-<title>llm</title>
-<p>llm chat GUI</p>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>llm</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="side">
+      <button class="new" id="new-chat" type="button">＋ New chat</button>
+      <nav class="chat-list" id="chat-list" aria-label="Chats"></nav>
+    </aside>
+
+    <main class="main">
+      <header class="top">
+        <button type="button" class="model" id="model-label" title="Chat settings"></button>
+        <div class="tools">
+          <button type="button" id="web-toggle" aria-pressed="false" title="Let the model search the web"></button>
+          <button type="button" id="thinking-toggle" title="Expand or collapse all thinking (Alt+T)">Thinking ▾</button>
+          <button type="button" id="settings-open" title="Model, system prompt, temperature">Settings</button>
+        </div>
+      </header>
+
+      <div class="flash" id="flash" role="status" hidden></div>
+
+      <div class="messages" id="messages">
+        <div class="column" id="column"></div>
+      </div>
+
+      <form class="composer" id="composer">
+        <div class="column">
+          <textarea id="prompt" rows="1" placeholder="Message… (Enter sends, Shift+Enter for a new line)" autofocus></textarea>
+          <button class="send" id="send" type="submit">Send</button>
+          <button class="stop" id="stop" type="button" hidden>Stop</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <dialog id="settings">
+    <form method="dialog" id="settings-form">
+      <div class="row">
+        <div>
+          <label for="set-provider">Provider</label>
+          <select id="set-provider"></select>
+        </div>
+        <div>
+          <label for="set-model">Model</label>
+          <input id="set-model" list="model-options" autocomplete="off">
+          <datalist id="model-options"></datalist>
+        </div>
+      </div>
+      <label for="set-system">System prompt</label>
+      <textarea id="set-system"></textarea>
+      <label for="set-temperature">Temperature (blank for the provider default)</label>
+      <input id="set-temperature" type="number" min="0" max="2" step="0.1">
+      <div class="problem" id="set-problem" hidden></div>
+      <div class="actions">
+        <button type="button" id="set-cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/vendor/marked.umd.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

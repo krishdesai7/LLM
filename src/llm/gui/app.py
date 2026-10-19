@@ -56,6 +56,7 @@ class ReplyBody:
 @dataclass
 class AttachBody:
     after: int = 0
+    owner: str = ""
 
 
 @dataclass
@@ -245,6 +246,8 @@ def attach(chat_id: str, data: AttachBody, state: State) -> ServerSentEvent:
     run = hub.runs.get(chat_id)
     if run is None:
         raise HTTPException(status_code=404, detail="no reply in progress")
+    if data.owner:
+        hub.runs.adopt(run, data.owner)  # a reloaded page has a new id
     return ServerSentEvent(_sse(run, data.after))
 
 

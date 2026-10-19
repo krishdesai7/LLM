@@ -310,3 +310,81 @@ def test_deleting_the_chat_mid_run_still_ends_with_done(
     events = _collect(run)
     assert events[-1]["type"] == "done"
     assert any(e["type"] == "error" for e in events)
+
+
+def test_cancel_at_a_tool_call_leaves_the_chat_usable(
+    chat_id: str, store: ChatStore
+) -> None:
+    """Stop lands right after the model asked for a tool, before it ran."""
+    session = _session(
+        FakeClient([tool_call_chunks("web_search", "{}")]), tools=_echo_box()
+    )
+    run = ChatRun(chat_id, session, store, "hi", owner="page-1")
+    run.cancel()  # observed at the first delta, which is the tool_call
+    run.start()
+    events = _collect(run)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["cancelled"] is True
+
+    assert [m.role for m in session.messages] == ["user", "assistant", "tool"]
+    assert session.messages[-1].tool_call_id == "call_1"
+    assert [m.role for m in store.load(chat_id).messages] == [
+        "user",
+        "assistant",
+        "tool",
+    ]
+
+    follow_up = FakeClient([default_round()])
+    session.client = follow_up  # type: ignore[assignment]
+    again = _start(chat_id, store, session, "are you ok?")
+    assert _collect(again)[-1]["type"] == "done"
+    sent = follow_up.completions.calls[0]["messages"]
+    asked = [c["id"] for m in sent if m.get("tool_calls") for c in m["tool_calls"]]
+    answered = [m["tool_call_id"] for m in sent if m["role"] == "tool"]
+    assert asked == answered == ["call_1"]
+
+
+def test_a_failing_store_still_ends_the_run_with_done(
+    chat_id: str, store: ChatStore
+) -> None:
+    real = store.append_message
+
+    def flaky(cid: str, message: Message) -> None:
+        if message.role == "assistant":
+            msg = "disk on fire"
+            raise RuntimeError(msg)
+        real(cid, message)
+
+    store.append_message = flaky  # type: ignore[method-assign]
+    runs = RunManager()
+    run = runs.start(chat_id, _session(FakeClient([default_round()])), store, "hi", "p")
+    events = _collect(run)
+    assert events[-1]["type"] == "done"
+    assert any(e["type"] == "error" and "disk on fire" in e["text"] for e in events)
+    assert run.finished
+    assert runs.get(chat_id) is None
+    assert runs.running_ids() == set()
+
+
+def test_a_run_with_a_listener_is_not_reaped_even_if_its_page_is_silent(
+    chat_id: str, store: ChatStore
+) -> None:
+    """A backgrounded tab throttles its timers but keeps its stream open."""
+    now = [0.0]
+    client = GatedClient([default_round()], gates=[(0, 1)])
+    runs = RunManager(grace_seconds=15, clock=lambda: now[0])
+    run = runs.start(chat_id, _session(client), store, "hi", "page-1")
+
+    async def watch() -> tuple[bool, bool]:
+        stream = run.subscribe()
+        await anext(stream)
+        now[0] = 1000.0
+        runs.reap()
+        while_listening = run.cancelled
+        await stream.aclose()
+        runs.reap()
+        return while_listening, run.cancelled
+
+    assert asyncio.run(watch()) == (False, True)
+    client.gates[0, 1].set()
+    _collect(run)

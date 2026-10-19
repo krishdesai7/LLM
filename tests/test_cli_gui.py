@@ -126,3 +126,17 @@ def test_the_app_factory_builds_a_guarded_app_from_the_environment() -> None:
     client.headers["cookie"] = f"{COOKIE}={token}"
     state = client.get("/api/state").json()
     assert state["default_model"] == "moonshot/kimi-k2"
+
+
+def test_a_port_still_in_time_wait_is_not_reported_busy() -> None:
+    """Restarting right after a stop must work: closed connections linger."""
+    with socket.socket() as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        port = server.getsockname()[1]
+        with socket.create_connection(("127.0.0.1", port)) as client:
+            accepted, _ = server.accept()
+            accepted.close()  # the server side closes first, so it holds TIME_WAIT
+            client.recv(1)
+    launch._ensure_free(port)
