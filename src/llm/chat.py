@@ -8,6 +8,7 @@ network itself.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -79,6 +80,9 @@ class Message:
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
+    #: Chain-of-thought for display and storage only; never sent back.
+    reasoning: str = ""
+    reasoning_seconds: float = 0.0
 
     def as_param(self) -> ChatCompletionMessageParam:
         if self.role == "tool":
@@ -206,21 +210,36 @@ class ChatSession:
     def _round(self, requested: list[ToolCall]) -> Generator[Delta]:
         """Stream one completion, appending any tool calls to ``requested``."""
         text: list[str] = []
+        thinking: list[str] = []
+        watch = _Stopwatch()
         pending: dict[int, _PartialCall] = {}
         stream = self._create()
         try:
             for chunk in stream:
                 self._accumulate_usage(chunk)
                 for delta in _deltas_of(chunk):
-                    if delta.kind == "text":
+                    if delta.kind == "reasoning":
+                        thinking.append(delta.text)
+                        watch.start()
+                    elif delta.kind == "text":
                         text.append(delta.text)
+                        watch.stop()
                     yield delta
                 _collect_tool_calls(chunk, pending)
         finally:
             stream.close()
             calls = [partial.build() for _, partial in sorted(pending.items())]
             requested.extend(calls)
-            self.messages.append(Message("assistant", "".join(text).strip(), calls))
+            watch.stop()
+            self.messages.append(
+                Message(
+                    "assistant",
+                    "".join(text).strip(),
+                    calls,
+                    reasoning="".join(thinking),
+                    reasoning_seconds=watch.elapsed,
+                )
+            )
 
     def _create(self) -> Stream[ChatCompletionChunk]:
         extra: dict[str, Any] = {}
@@ -271,6 +290,24 @@ class ChatSession:
                 lines += [message.content]
             lines += [""]
         return "\n".join(lines)
+
+
+@dataclass(slots=True)
+class _Stopwatch:
+    """Times the reasoning phase of one round: first thought to first answer."""
+
+    started: float | None = None
+    elapsed: float = 0.0
+    stopped: bool = False
+
+    def start(self) -> None:
+        if self.started is None:
+            self.started = _now()
+
+    def stop(self) -> None:
+        if self.started is not None and not self.stopped:
+            self.elapsed = _now() - self.started
+            self.stopped = True
 
 
 @dataclass(slots=True)
@@ -335,6 +372,10 @@ def _usage_of(response: Any) -> Usage | None:
 
 def _today() -> date:
     return date.today()
+
+
+def _now() -> float:
+    return time.monotonic()
 
 
 def _long_date(day: date) -> str:

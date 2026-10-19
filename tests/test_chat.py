@@ -4,7 +4,7 @@ from datetime import date
 from typing import Any
 
 import pytest
-from conftest import FakeChunk, calls_of
+from conftest import FakeChunk, calls_of, text_chunk
 
 from llm import chat
 from llm.tools import WEB_SEARCH, ToolBox
@@ -121,3 +121,35 @@ def test_transcript_is_markdown(make_session: Any) -> None:
     assert transcript.startswith("# fake/fake-1")
     assert "## system" in transcript
     assert "Hello, world" in transcript
+
+
+def test_assistant_message_keeps_reasoning(make_session: Any) -> None:
+    session = make_session()
+    list(session.stream("hi"))
+    assert session.messages[-1].reasoning == "hmm"
+
+
+def test_reasoning_seconds_spans_first_reasoning_to_first_text(
+    make_session: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = iter([10.0, 14.5, 99.0, 99.0])
+    monkeypatch.setattr(chat, "_now", lambda: next(clock))
+    session = make_session()
+    list(session.stream("hi"))
+    assert session.messages[-1].reasoning_seconds == pytest.approx(4.5)
+
+
+def test_reasoning_is_never_sent_back_to_the_api(make_session: Any) -> None:
+    session = make_session()
+    list(session.stream("hi"))
+    list(session.stream("again"))
+    sent = calls_of(session)[1]["messages"]
+    assert {"role": "assistant", "content": "Hello, world"} in sent
+    assert all("reasoning" not in message for message in sent)
+
+
+def test_message_without_reasoning_has_zero_seconds(make_session: Any) -> None:
+    session = make_session(chunks=[text_chunk("plain")])
+    list(session.stream("hi"))
+    assert session.messages[-1].reasoning == ""
+    assert session.messages[-1].reasoning_seconds == pytest.approx(0.0)
