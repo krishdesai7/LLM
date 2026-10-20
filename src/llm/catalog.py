@@ -11,19 +11,25 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from openai._client import OpenAI
+from openai.pagination import SyncPage
+from openai.types.model import Model
 
 if TYPE_CHECKING:
+    from typing import Literal
+
     from .registry import Provider
 
-__all__ = ["cache_dir", "clear_cache", "list_models"]
+__all__: list[str] = ["cache_dir", "clear_cache", "list_models"]
 
-CACHE_TTL_SECONDS = 24 * 60 * 60
+CACHE_TTL_SECONDS: Literal[86400] = 24 * 60 * 60
 
 
 def cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME")
-    root = Path(base).expanduser() if base else Path.home() / ".cache"
+    base: str | None = os.environ.get(key="XDG_CACHE_HOME")
+    root: Path = Path(base).expanduser() if base else Path.home() / ".cache"
     return root / "llm" / "models"
 
 
@@ -41,11 +47,11 @@ def list_models(
     if not provider.is_ready():
         return []
 
-    cached = None if refresh else _read_cache(provider.name, ttl)
+    cached: list[str] | None = None if refresh else _read_cache(provider.name, ttl)
     if cached is not None:
         return cached
 
-    models = _fetch(provider)
+    models: list[str] = _fetch(provider)
     if models:
         _write_cache(provider.name, models)
     return models
@@ -53,11 +59,11 @@ def list_models(
 
 def clear_cache() -> int:
     """Delete every cached model list. Returns the number of files removed."""
-    directory = cache_dir()
+    directory: Path = cache_dir()
     if not directory.is_dir():
         return 0
     removed = 0
-    for path in directory.glob("*.json"):
+    for path in directory.glob(pattern="*.json"):
         path.unlink(missing_ok=True)
         removed += 1
     return removed
@@ -67,9 +73,13 @@ def _fetch(provider: Provider) -> list[str]:
     from .registry import make_client
 
     try:
-        client = make_client(provider, timeout=15.0, max_retries=0)
-        page = client.models.list()
-        ids = {_normalise(model.id) for model in page if getattr(model, "id", None)}
+        client: OpenAI = make_client(provider, timeout=15.0, max_retries=0)
+        page: SyncPage[Model] = client.models.list()
+        ids: set[str] = {
+            _normalise(model_id=model.id)
+            for model in page
+            if getattr(model, "id", None)
+        }
     except Exception:  # ruff: ignore[blind-except] - discovery is best-effort by design
         return []
     return sorted(ids)
@@ -85,12 +95,12 @@ def _cache_file(provider_name: str) -> Path:
 
 
 def _read_cache(provider_name: str, ttl: float) -> list[str] | None:
-    path = _cache_file(provider_name)
+    path: Path = _cache_file(provider_name)
     try:
-        age = time.time() - path.stat().st_mtime
+        age: float = time.time() - path.stat().st_mtime
         if age > ttl:
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data: Any = json.loads(path.read_text(encoding="utf-8"))
     except OSError, ValueError:
         return None
     if isinstance(data, list) and all(isinstance(item, str) for item in data):
@@ -99,9 +109,9 @@ def _read_cache(provider_name: str, ttl: float) -> list[str] | None:
 
 
 def _write_cache(provider_name: str, models: list[str]) -> None:
-    path = _cache_file(provider_name)
+    path: Path = _cache_file(provider_name)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(models), encoding="utf-8")
+        path.write_text(data=json.dumps(obj=models), encoding="utf-8")
     except OSError:
         pass  # a cold cache is never fatal

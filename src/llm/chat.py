@@ -11,10 +11,11 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from typing import Any, Final, LiteralString
 
     from openai import OpenAI, Stream
     from openai.types.chat import (
@@ -25,18 +26,20 @@ if TYPE_CHECKING:
     from .registry import ModelRef
     from .tools import ToolBox
 
-__all__ = ["ChatSession", "Delta", "Message", "ToolCall", "Usage"]
+__all__: list[str] = ["ChatSession", "Delta", "Message", "ToolCall", "Usage"]
 
-Role = Literal["system", "user", "assistant", "tool"]
-DeltaKind = Literal["text", "reasoning", "tool_call", "tool_result", "notice"]
+Role: type[Role] = Literal["system", "user", "assistant", "tool"]
+DeltaKind: type[DeltaKind] = Literal[
+    "text", "reasoning", "tool_call", "tool_result", "notice"
+]
 
 #: Ceiling on tool round-trips per turn, so a confused model cannot loop away
 #: your tokens forever.
-MAX_TOOL_ROUNDS = 6
+MAX_TOOL_ROUNDS: Final[int] = 6
 
 #: Sent ahead of every conversation. Without the date, models assume it is
 #: still their training cutoff and dismiss genuinely recent results as bogus.
-PREAMBLE = (
+PREAMBLE: Final[LiteralString] = (
     "Today is {today}. Your training data ends before that, so things may "
     "have changed since; do not assume it is still the year your training "
     "suggests. Answer directly, and say so when you are unsure or when a "
@@ -44,7 +47,7 @@ PREAMBLE = (
 )
 
 #: Appended to the preamble while the web tools are on.
-WEB_PREAMBLE = (
+WEB_PREAMBLE: Final[LiteralString] = (
     "You have web_search and fetch_url tools that see the live web as of "
     "today. Dates in their results that are later than your training data "
     "are real, not errors: trust them over your own sense of the present. Use "
@@ -87,8 +90,8 @@ class Message:
     def as_param(self) -> ChatCompletionMessageParam:
         if self.role == "tool":
             return cast(
-                "ChatCompletionMessageParam",
-                {
+                typ="ChatCompletionMessageParam",
+                val={
                     "role": "tool",
                     "tool_call_id": self.tool_call_id or "",
                     "content": self.content,
@@ -96,8 +99,8 @@ class Message:
             )
         if self.tool_calls:
             return cast(
-                "ChatCompletionMessageParam",
-                {
+                typ="ChatCompletionMessageParam",
+                val={
                     "role": "assistant",
                     "content": self.content or None,
                     "tool_calls": [call.as_param() for call in self.tool_calls],
@@ -131,8 +134,8 @@ class Usage:
 
     def __add__(self, other: Usage) -> Usage:
         return Usage(
-            self.prompt_tokens + other.prompt_tokens,
-            self.completion_tokens + other.completion_tokens,
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
         )
 
     def __str__(self) -> str:
@@ -160,8 +163,8 @@ class ChatSession:
 
     def switch(self, ref: ModelRef, client: OpenAI) -> None:
         """Point the conversation at a different model, keeping history."""
-        self.ref = ref
-        self.client = client
+        self.ref: ModelRef = ref
+        self.client: OpenAI = client
 
     def clear(self) -> None:
         self.messages.clear()
@@ -172,7 +175,7 @@ class ChatSession:
 
         Rebuilt on every request so it tracks ``/web`` and the calendar.
         """
-        parts = [PREAMBLE.format(today=_long_date(_today()))]
+        parts: list[str] = [PREAMBLE.format(today=_long_date(day=_today()))]
         if self.tools:
             parts.append(WEB_PREAMBLE)
         if self.system:
@@ -180,7 +183,7 @@ class ChatSession:
         return "\n\n".join(parts)
 
     def payload(self) -> list[ChatCompletionMessageParam]:
-        head = Message("system", self.system_prompt())
+        head = Message(role="system", content=self.system_prompt())
         return [message.as_param() for message in (head, *self.messages)]
 
     def send(self, prompt: str) -> str:
@@ -195,15 +198,17 @@ class ChatSession:
         History is updated as each round completes, so an abandoned stream
         still leaves the conversation coherent.
         """
-        self.messages.append(Message("user", prompt))
+        self.messages.append(Message(role="user", content=prompt))
         self.last_usage = None
         for _ in range(MAX_TOOL_ROUNDS):
             calls: list[ToolCall] = []
-            yield from self._round(calls)
+            yield from self._round(requested=calls)
             if not calls:
                 return
             yield from self._run_tools(calls)
-        yield Delta("notice", f"stopped after {MAX_TOOL_ROUNDS} rounds of tool calls")
+        yield Delta(
+            kind="notice", text=f"stopped after {MAX_TOOL_ROUNDS} rounds of tool calls"
+        )
 
     # -- one API round ------------------------------------------------------
 
@@ -213,7 +218,7 @@ class ChatSession:
         thinking: list[str] = []
         watch = _Stopwatch()
         pending: dict[int, _PartialCall] = {}
-        stream = self._create()
+        stream: Stream[ChatCompletionChunk] = self._create()
         try:
             for chunk in stream:
                 self._accumulate_usage(chunk)
@@ -228,14 +233,16 @@ class ChatSession:
                 _collect_tool_calls(chunk, pending)
         finally:
             stream.close()
-            calls = [partial.build() for _, partial in sorted(pending.items())]
+            calls: list[ToolCall] = [
+                partial.build() for _, partial in sorted(pending.items())
+            ]
             requested.extend(calls)
             watch.stop()
             self.messages.append(
                 Message(
-                    "assistant",
-                    "".join(text).strip(),
-                    calls,
+                    role="assistant",
+                    content="".join(text).strip(),
+                    tool_calls=calls,
                     reasoning="".join(thinking),
                     reasoning_seconds=watch.elapsed,
                 )
@@ -246,40 +253,40 @@ class ChatSession:
         if self.tools:
             extra["tools"] = self.tools.schemas()
             extra["tool_choice"] = "auto"
-        # cast: **params widens the SDK overload to the union return type.
-        return cast(
-            "Stream[ChatCompletionChunk]",
-            self.client.chat.completions.create(
-                model=self.model_id,
-                messages=self.payload(),
-                stream=True,
-                **extra,
-                **self.params,
-            ),
+        return self.client.chat.completions.create(
+            model=self.model_id,
+            messages=self.payload(),
+            stream=True,
+            **extra,
+            **self.params,
         )
 
     def _accumulate_usage(self, chunk: Any) -> None:
-        usage = _usage_of(chunk)
+        usage: Usage | None = _usage_of(response=chunk)
         if usage is None:
             return
-        self.last_usage = usage if self.last_usage is None else self.last_usage + usage
+        self.last_usage: Usage = (
+            usage if self.last_usage is None else self.last_usage + usage
+        )
 
     # -- tools --------------------------------------------------------------
 
     def _run_tools(self, calls: list[ToolCall]) -> Generator[Delta]:
         for call in calls:
-            yield Delta("tool_call", call.summary())
-            output = (
+            yield Delta(kind="tool_call", text=call.summary())
+            output: str = (
                 self.tools.call(call.name, call.arguments)
                 if self.tools is not None
                 else f"Error: {call.name} is not available"
             )
-            self.messages.append(Message("tool", output, tool_call_id=call.id))
-            yield Delta("tool_result", _preview(output))
+            self.messages.append(
+                Message(role="tool", content=output, tool_call_id=call.id)
+            )
+            yield Delta(kind="tool_result", text=_preview(output))
 
     def transcript(self) -> str:
         """The conversation as markdown, for ``/save``."""
-        lines = [f"# {self.ref.spec}", ""]
+        lines: list[str] = [f"# {self.ref.spec}", ""]
         if self.system:
             lines += ["## system", "", self.system, ""]
         for message in self.messages:
@@ -302,11 +309,11 @@ class _Stopwatch:
 
     def start(self) -> None:
         if self.started is None:
-            self.started = _now()
+            self.started: float = _now()
 
     def stop(self) -> None:
         if self.started is not None and not self.stopped:
-            self.elapsed = _now() - self.started
+            self.elapsed: float = _now() - self.started
             self.stopped = True
 
 
@@ -332,10 +339,12 @@ def _collect_tool_calls(chunk: Any, pending: dict[int, _PartialCall]) -> None:
         return
     delta = chunk.choices[0].delta
     for fragment in getattr(delta, "tool_calls", None) or []:
-        partial = pending.setdefault(getattr(fragment, "index", 0) or 0, _PartialCall())
+        partial: _PartialCall = pending.setdefault(
+            getattr(fragment, "index", 0) or 0, _PartialCall()
+        )
         if getattr(fragment, "id", None):
             partial.id = fragment.id
-        function = getattr(fragment, "function", None)
+        function: Any | None = getattr(fragment, "function", None)
         if function is None:
             continue
         if getattr(function, "name", None):
@@ -347,21 +356,21 @@ def _collect_tool_calls(chunk: Any, pending: dict[int, _PartialCall]) -> None:
 def _deltas_of(chunk: Any) -> Generator[Delta]:
     if not getattr(chunk, "choices", None):
         return
-    delta = chunk.choices[0].delta
+    delta: Any = chunk.choices[0].delta
     if delta is None:
         return
     # Several providers stream chain-of-thought on a side channel.
-    thinking = getattr(delta, "reasoning_content", None) or getattr(
+    thinking: Any | None = getattr(delta, "reasoning_content", None) or getattr(
         delta, "reasoning", None
     )
     if isinstance(thinking, str) and thinking:
-        yield Delta("reasoning", thinking)
+        yield Delta(kind="reasoning", text=thinking)
     if delta.content:
-        yield Delta("text", delta.content)
+        yield Delta(kind="text", text=delta.content)
 
 
 def _usage_of(response: Any) -> Usage | None:
-    usage = getattr(response, "usage", None)
+    usage: Any | None = getattr(response, "usage", None)
     if usage is None:
         return None
     return Usage(
@@ -384,12 +393,12 @@ def _long_date(day: date) -> str:
 
 
 def _compact(arguments: str, limit: int = 80) -> str:
-    flat = " ".join(arguments.split())
+    flat: str = " ".join(arguments.split())
     return flat if len(flat) <= limit else f"{flat[:limit]}…"
 
 
 def _preview(output: str, limit: int = 120) -> str:
-    flat = " ".join(output.split())
-    lines = len(output.splitlines())
-    head = flat if len(flat) <= limit else f"{flat[:limit]}…"
+    flat: str = " ".join(output.split())
+    lines: int = len(output.splitlines())
+    head: str = flat if len(flat) <= limit else f"{flat[:limit]}…"
     return f"{head}  ({len(output)} chars, {lines} lines)"

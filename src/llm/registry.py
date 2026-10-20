@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
     from openai import OpenAI
 
-__all__ = [
+__all__: list[str] = [
     "MissingAPIKeyError",
     "ModelRef",
     "Provider",
@@ -66,16 +67,16 @@ class Provider:
 
     def api_key(self) -> str | None:
         """The credential for this provider, or ``None`` if unavailable."""
-        key = os.environ.get(self.env_var, "").strip()
+        key: str = os.environ.get(key=self.env_var, default="").strip()
         return key or self.fallback_key
 
     def is_ready(self) -> bool:
         return self.api_key() is not None
 
     def require_api_key(self) -> str:
-        key = self.api_key()
+        key: str | None = self.api_key()
         if key is None:
-            msg = (
+            msg: str = (
                 f"{self.title} needs an API key: set {self.env_var} in your "
                 f"environment (or in .env)."
             )
@@ -103,59 +104,108 @@ class ModelRef:
 # --------------------------------------------------------------------------
 
 _BUILTIN_PROVIDERS: tuple[Provider, ...] = (
-    Provider("openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "OpenAI"),
     Provider(
-        "anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com/v1", "Anthropic"
+        name="openai",
+        env_var="OPENAI_API_KEY",
+        base_url="https://api.openai.com/v1",
+        label="OpenAI",
     ),
     Provider(
-        "google",
-        "GEMINI_API_KEY",
-        "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "Google Gemini",
+        name="anthropic",
+        env_var="ANTHROPIC_API_KEY",
+        base_url="https://api.anthropic.com/v1",
+        label="Anthropic",
     ),
     Provider(
-        "moonshot", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1", "Moonshot (Kimi)"
-    ),
-    Provider("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com/v1", "DeepSeek"),
-    Provider("xai", "XAI_API_KEY", "https://api.x.ai/v1", "xAI (Grok)"),
-    Provider("zai", "ZAI_API_KEY", "https://api.z.ai/api/paas/v4", "Z.ai (GLM)"),
-    Provider("mistral", "MISTRAL_API_KEY", "https://api.mistral.ai/v1", "Mistral"),
-    Provider("groq", "GROQ_API_KEY", "https://api.groq.com/openai/v1", "Groq"),
-    Provider("cerebras", "CEREBRAS_API_KEY", "https://api.cerebras.ai/v1", "Cerebras"),
-    Provider("together", "TOGETHER_API_KEY", "https://api.together.xyz/v1", "Together"),
-    Provider(
-        "fireworks",
-        "FIREWORKS_API_KEY",
-        "https://api.fireworks.ai/inference/v1",
-        "Fireworks",
+        name="google",
+        env_var="GEMINI_API_KEY",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        label="Google Gemini",
     ),
     Provider(
-        "deepinfra",
-        "DEEPINFRA_API_KEY",
-        "https://api.deepinfra.com/v1/openai",
-        "DeepInfra",
+        name="moonshot",
+        env_var="MOONSHOT_API_KEY",
+        base_url="https://api.moonshot.ai/v1",
+        label="Moonshot (Kimi)",
     ),
     Provider(
-        "perplexity", "PERPLEXITY_API_KEY", "https://api.perplexity.ai", "Perplexity"
+        name="deepseek",
+        env_var="DEEPSEEK_API_KEY",
+        base_url="https://api.deepseek.com/v1",
+        label="DeepSeek",
     ),
     Provider(
-        "openrouter",
-        "OPENROUTER_API_KEY",
-        "https://openrouter.ai/api/v1",
-        "OpenRouter",
+        name="xai",
+        env_var="XAI_API_KEY",
+        base_url="https://api.x.ai/v1",
+        label="xAI (Grok)",
     ),
     Provider(
-        "ollama",
-        "OLLAMA_API_KEY",
-        "http://localhost:11434/v1",
-        "Ollama (local)",
+        name="zai",
+        env_var="ZAI_API_KEY",
+        base_url="https://api.z.ai/api/paas/v4",
+        label="Z.ai (GLM)",
+    ),
+    Provider(
+        name="mistral",
+        env_var="MISTRAL_API_KEY",
+        base_url="https://api.mistral.ai/v1",
+        label="Mistral",
+    ),
+    Provider(
+        name="groq",
+        env_var="GROQ_API_KEY",
+        base_url="https://api.groq.com/openai/v1",
+        label="Groq",
+    ),
+    Provider(
+        name="cerebras",
+        env_var="CEREBRAS_API_KEY",
+        base_url="https://api.cerebras.ai/v1",
+        label="Cerebras",
+    ),
+    Provider(
+        name="together",
+        env_var="TOGETHER_API_KEY",
+        base_url="https://api.together.xyz/v1",
+        label="Together",
+    ),
+    Provider(
+        name="fireworks",
+        env_var="FIREWORKS_API_KEY",
+        base_url="https://api.fireworks.ai/inference/v1",
+        label="Fireworks",
+    ),
+    Provider(
+        name="deepinfra",
+        env_var="DEEPINFRA_API_KEY",
+        base_url="https://api.deepinfra.com/v1/openai",
+        label="DeepInfra",
+    ),
+    Provider(
+        name="perplexity",
+        env_var="PERPLEXITY_API_KEY",
+        base_url="https://api.perplexity.ai",
+        label="Perplexity",
+    ),
+    Provider(
+        name="openrouter",
+        env_var="OPENROUTER_API_KEY",
+        base_url="https://openrouter.ai/api/v1",
+        label="OpenRouter",
+    ),
+    Provider(
+        name="ollama",
+        env_var="OLLAMA_API_KEY",
+        base_url="http://localhost:11434/v1",
+        label="Ollama (local)",
         fallback_key="ollama",
     ),
     Provider(
-        "lmstudio",
-        "LMSTUDIO_API_KEY",
-        "http://localhost:1234/v1",
-        "LM Studio (local)",
+        name="lmstudio",
+        env_var="LMSTUDIO_API_KEY",
+        base_url="http://localhost:1234/v1",
+        label="LM Studio (local)",
         fallback_key="lm-studio",
     ),
 )
@@ -187,11 +237,11 @@ _PREFIX_HINTS: Mapping[str, str] = {
 
 def config_path() -> Path:
     """Location of the user config file (honours ``$LLM_CONFIG``/XDG)."""
-    override = os.environ.get("LLM_CONFIG")
+    override: str | None = os.environ.get(key="LLM_CONFIG")
     if override:
         return Path(override).expanduser()
-    base = os.environ.get("XDG_CONFIG_HOME")
-    root = Path(base).expanduser() if base else Path.home() / ".config"
+    base: str | None = os.environ.get(key="XDG_CONFIG_HOME")
+    root: Path = Path(base).expanduser() if base else Path.home() / ".config"
     return root / "llm" / "config.toml"
 
 
@@ -206,20 +256,26 @@ class Registry:
     @classmethod
     def load(cls, path: Path | None = None) -> Self:
         """Build a registry, layering ``config.toml`` over the built-ins."""
-        providers = {p.name: p for p in _BUILTIN_PROVIDERS}
-        data = _read_config(path if path is not None else config_path())
+        providers: dict[str, Provider] = {p.name: p for p in _BUILTIN_PROVIDERS}
+        data: Mapping[str, Any] = _read_config(
+            path=path if path is not None else config_path()
+        )
 
-        for name, raw in _table(data, "providers").items():
-            providers[name] = _provider_from_config(name, raw, providers.get(name))
+        for name, raw in _table(data, key="providers").items():
+            providers[name] = _provider_from_config(
+                name, raw, existing=providers.get(name)
+            )
 
-        aliases = {
-            str(k): str(v) for k, v in _table(data, "aliases").items() if str(v).strip()
+        aliases: dict[str, str] = {
+            str(object=k): str(object=v)
+            for k, v in _table(data, key="aliases").items()
+            if str(object=v).strip()
         }
-        default = data.get("default_model")
+        default: Any | None = data.get("default_model")
         return cls(
             providers=providers,
             aliases=aliases,
-            default_model=str(default) if default else None,
+            default_model=str(object=default) if default else None,
         )
 
     # -- lookup ------------------------------------------------------------
@@ -228,8 +284,8 @@ class Registry:
         try:
             return self.providers[name]
         except KeyError:
-            known = ", ".join(sorted(self.providers))
-            msg = f"unknown provider {name!r}; known providers: {known}"
+            known: str = ", ".join(sorted(self.providers))
+            msg: str = f"unknown provider {name!r}; known providers: {known}"
             raise UnknownModelError(msg) from None
 
     def ready_providers(self) -> list[Provider]:
@@ -245,27 +301,27 @@ class Registry:
         Accepts an alias, ``provider/model-id``, or a bare model id whose
         prefix identifies the provider.
         """
-        name = spec.strip()
+        name: str = spec.strip()
         if not name:
             msg = "no model given"
             raise UnknownModelError(msg)
 
         for _ in range(len(self.aliases) + 1):
-            target = self.aliases.get(name)
+            target: str | None = self.aliases.get(name)
             if target is None or target == name:
                 break
-            name = target.strip()
+            name: str = target.strip()
 
         if "/" in name:
             head, _, tail = name.partition("/")
             if head in self.providers and tail:
-                return ModelRef(self.providers[head], tail)
+                return ModelRef(provider=self.providers[head], model_id=tail)
 
-        hint = _prefix_hint(name)
+        hint: str | None = _prefix_hint(model_id=name)
         if hint is not None and hint in self.providers:
-            return ModelRef(self.providers[hint], name)
+            return ModelRef(provider=self.providers[hint], model_id=name)
 
-        msg = (
+        msg: str = (
             f"cannot tell which provider serves {spec!r}. "
             f"Use 'provider/model' (e.g. 'moonshot/{name}'), or add an alias "
             f"to {config_path()}."
@@ -280,7 +336,7 @@ class Registry:
 
     def open(self, spec: str, **kwargs: Any) -> tuple[ModelRef, OpenAI]:
         """Resolve ``spec`` and return it alongside a ready client."""
-        ref = self.resolve(spec)
+        ref: ModelRef = self.resolve(spec)
         return ref, self.client_for(ref, **kwargs)
 
 
@@ -298,9 +354,9 @@ def make_client(provider: Provider, **kwargs: Any) -> OpenAI:
 
 
 def _prefix_hint(model_id: str) -> str | None:
-    lowered = model_id.lower()
-    matches = (p for p in _PREFIX_HINTS if lowered.startswith(p))
-    best = max(matches, key=len, default=None)
+    lowered: str = model_id.lower()
+    matches: Generator[str] = (p for p in _PREFIX_HINTS if lowered.startswith(p))
+    best: str | None = max(matches, key=len, default=None)
     return _PREFIX_HINTS[best] if best is not None else None
 
 
@@ -310,12 +366,12 @@ def _read_config(path: Path) -> Mapping[str, Any]:
     try:
         return tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
-        msg = f"could not read config at {path}: {exc}"
+        msg: str = f"could not read config at {path}: {exc}"
         raise LLMError(msg) from exc
 
 
 def _table(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
-    value = data.get(key)
+    value: Any | None = data.get(key)
     return value if isinstance(value, dict) else {}
 
 
@@ -323,29 +379,39 @@ def _provider_from_config(
     name: str, raw: Mapping[str, Any], existing: Provider | None
 ) -> Provider:
     if not isinstance(raw, dict):
-        msg = f"[providers.{name}] must be a table"
+        msg: str = f"[providers.{name}] must be a table"
         raise LLMError(msg)
 
     def pick(field_name: str, default: Any) -> Any:
         return raw.get(field_name, default)
 
-    env_var = pick("env_var", existing.env_var if existing else None)
-    base_url = pick("base_url", existing.base_url if existing else None)
+    env_var: Any = pick(
+        field_name="env_var", default=existing.env_var if existing else None
+    )
+    base_url: Any = pick(
+        field_name="base_url", default=existing.base_url if existing else None
+    )
     if not env_var or not base_url:
         msg = f"[providers.{name}] needs both env_var and base_url"
         raise LLMError(msg)
 
     return Provider(
         name=name,
-        env_var=str(env_var),
-        base_url=str(base_url),
-        label=str(pick("label", existing.label if existing else "")),
+        env_var=str(object=env_var),
+        base_url=str(object=base_url),
+        label=str(
+            object=pick(field_name="label", default=existing.label if existing else "")
+        ),
         fallback_key=(
-            str(raw["fallback_key"])
+            str(object=raw["fallback_key"])
             if "fallback_key" in raw
             else (existing.fallback_key if existing else None)
         ),
-        headers=dict(pick("headers", dict(existing.headers) if existing else {})),
+        headers=dict(
+            pick(
+                field_name="headers", default=dict(existing.headers) if existing else {}
+            )
+        ),
     )
 
 
