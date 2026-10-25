@@ -271,11 +271,11 @@ def _prompt_session() -> PromptSession[str]:
 
     @bindings.add("enter")
     def _submit(event: object) -> None:
-        event.current_buffer.validate_and_handle()  # pyrefly: ignore[missing-attribute]
+        event.current_buffer.validate_and_handle()  # ty: ignore[unresolved-attribute]
 
     @bindings.add("escape", "enter")
     def _newline(event: object) -> None:
-        event.current_buffer.insert_text("\n")  # pyrefly: ignore[missing-attribute]
+        event.current_buffer.insert_text("\n")  # ty: ignore[unresolved-attribute]
 
     history = None
     try:

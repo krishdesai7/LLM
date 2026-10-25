@@ -26,6 +26,7 @@ dev = [
   "pyrefly>=1.4.0",
   "pytest>=9.1.1",
   "ruff>=0.17.1",
+  "ty>=0.0.91",
 ]
 
 
@@ -39,6 +40,7 @@ check-unannotated-defs = true
 infer-return-types = "checked"
 # so test modules can import the shared fakes in tests/conftest.py
 search-path = ["src", "tests"]
+permissive-ignores = true
 
 
 [tool.uv]

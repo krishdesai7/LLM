@@ -98,7 +98,7 @@ def test_api_errors_do_not_kill_the_session(
     session = make_session()
 
     def boom(**_kwargs: Any) -> Any:
-        raise APIError("upstream exploded", request=None, body=None)  # type: ignore[arg-type]
+        raise APIError("upstream exploded", request=None, body=None)  # ty: ignore[invalid-argument-type]
 
     monkeypatch.setattr(session.client.completions, "create", boom)
     out = drive(["hi", "/clear"], session)

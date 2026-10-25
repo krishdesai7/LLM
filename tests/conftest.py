@@ -116,7 +116,7 @@ class GatedClient(FakeClient):
         self.rounds = rounds
         self.gates = {key: threading.Event() for key in gates}
         self.reached = {key: threading.Event() for key in gates}
-        self.completions.create = self._create  # type: ignore[method-assign]
+        self.completions.create = self._create  # ty: ignore[invalid-assignment]
         self._calls = 0
 
     def _create(self, **_kwargs: Any) -> GatedStream:
@@ -186,7 +186,7 @@ def make_session() -> Any:
     ) -> ChatSession:
         if rounds is None:
             rounds = [default_round() if chunks is None else chunks]
-        return ChatSession(ref=REF, client=FakeClient(rounds), **kwargs)  # type: ignore[arg-type]
+        return ChatSession(ref=REF, client=FakeClient(rounds), **kwargs)  # ty: ignore[invalid-argument-type]
 
     return _make
 
@@ -198,4 +198,4 @@ def fake_registry() -> Registry:
 
 def calls_of(session: ChatSession) -> list[dict[str, Any]]:
     """The requests a session's fake client received."""
-    return session.client.completions.calls  # type: ignore[attr-defined]
+    return session.client.completions.calls  # ty: ignore[unresolved-attribute]

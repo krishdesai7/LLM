@@ -372,7 +372,7 @@ def test_a_page_that_stops_heartbeating_has_its_reply_cancelled(
     )
     chat_id = store.create(Settings("fake/fake-1"))
     with _client(app):  # runs the app's lifespan, which owns the reaper
-        session = ChatSession(ref=REF, client=gated)  # type: ignore[arg-type]
+        session = ChatSession(ref=REF, client=gated)  # ty: ignore[invalid-argument-type]
         run = runs.start(chat_id, session, store, "hi", "page-1")
         deadline = time.monotonic() + 5
         while not run.cancelled:
@@ -495,7 +495,7 @@ def test_attaching_hands_the_reply_to_the_new_page(
     chat_id = _new_chat(client)
     first = _reply(app, chat_id)
     script.reached((0, 1))
-    assert runs.get(chat_id).owner == OWNER  # type: ignore[union-attr]
+    assert runs.get(chat_id).owner == OWNER  # ty: ignore[unresolved-attribute]
     attached = Background(
         app,
         lambda c: c.post(
@@ -503,7 +503,7 @@ def test_attaching_hands_the_reply_to_the_new_page(
         ),
     )
     deadline = time.monotonic() + 5
-    while runs.get(chat_id).owner != "page-2":  # type: ignore[union-attr]
+    while runs.get(chat_id).owner != "page-2":  # ty: ignore[unresolved-attribute]
         assert time.monotonic() < deadline, "ownership never moved"
         time.sleep(0.01)
     script.open((0, 1))

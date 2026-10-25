@@ -237,7 +237,7 @@ def test_a_provider_error_becomes_an_error_event_and_the_chat_stays_usable(
     assert "OpenAIError" in events[0]["text"]
     assert [m.content for m in store.load(chat_id).messages] == ["hi"]
 
-    session.client = FakeClient([default_round()])  # type: ignore[assignment]
+    session.client = FakeClient([default_round()])  # ty: ignore[invalid-assignment]
     retry = _start(chat_id, store, session, "again")
     assert _collect(retry)[-1]["type"] == "done"
     assert store.load(chat_id).messages[-1].content == "Hello, world"
@@ -335,7 +335,7 @@ def test_cancel_at_a_tool_call_leaves_the_chat_usable(
     ]
 
     follow_up = FakeClient([default_round()])
-    session.client = follow_up  # type: ignore[assignment]
+    session.client = follow_up  # ty: ignore[invalid-assignment]
     again = _start(chat_id, store, session, "are you ok?")
     assert _collect(again)[-1]["type"] == "done"
     sent = follow_up.completions.calls[0]["messages"]
@@ -355,7 +355,7 @@ def test_a_failing_store_still_ends_the_run_with_done(
             raise RuntimeError(msg)
         real(cid, message)
 
-    store.append_message = flaky  # type: ignore[method-assign]
+    store.append_message = flaky  # ty: ignore[invalid-assignment]
     runs = RunManager()
     run = runs.start(chat_id, _session(FakeClient([default_round()])), store, "hi", "p")
     events = _collect(run)
