@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import os
 import tomllib
-from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Generator, Iterator, Mapping
 
     from openai import OpenAI
 

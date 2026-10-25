@@ -13,12 +13,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from openai._client import OpenAI
-from openai.pagination import SyncPage
-from openai.types.model import Model
-
 if TYPE_CHECKING:
     from typing import Literal
+
+    from openai._client import OpenAI
+    from openai.pagination import SyncPage
+    from openai.types.model import Model
 
     from .registry import Provider
 
