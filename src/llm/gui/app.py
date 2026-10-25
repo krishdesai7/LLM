@@ -19,6 +19,7 @@ from litestar import Litestar, MediaType, Request, Response, delete, get, post, 
 from litestar.datastructures import State
 from litestar.exceptions import ClientException, HTTPException
 from litestar.middleware import DefineMiddleware
+from litestar.params import FromPath, JSONBody
 from litestar.response import ServerSentEvent
 from litestar.static_files import create_static_files_router
 
@@ -156,7 +157,7 @@ def app_state(state: State) -> dict[str, Any]:
 
 
 @get("/api/models/{provider:str}", sync_to_thread=True)
-def models(provider: str, state: State) -> list[str]:
+def models(provider: FromPath[str], state: State) -> list[str]:
     hub: Hub = state.hub
     try:
         target = hub.registry.provider(provider)
@@ -179,7 +180,7 @@ def list_chats(state: State) -> list[dict[str, Any]]:
 
 
 @post("/api/chats", sync_to_thread=True)
-def create_chat(data: SettingsBody, state: State) -> dict[str, str]:
+def create_chat(data: JSONBody[SettingsBody], state: State) -> dict[str, str]:
     hub: Hub = state.hub
     settings = _settings_of(data, hub.registry)
     _llm(lambda: hub.registry.open(settings.model))  # fail now, not on first reply
@@ -187,7 +188,7 @@ def create_chat(data: SettingsBody, state: State) -> dict[str, str]:
 
 
 @get("/api/chats/{chat_id:str}", sync_to_thread=True)
-def get_chat(chat_id: str, state: State) -> dict[str, Any]:
+def get_chat(chat_id: FromPath[str], state: State) -> dict[str, Any]:
     hub: Hub = state.hub
     stored = hub.store.load(chat_id)
     return {
@@ -200,7 +201,7 @@ def get_chat(chat_id: str, state: State) -> dict[str, Any]:
 
 
 @delete("/api/chats/{chat_id:str}", status_code=204, sync_to_thread=True)
-def delete_chat(chat_id: str, state: State) -> None:
+def delete_chat(chat_id: FromPath[str], state: State) -> None:
     hub: Hub = state.hub
     hub.store.load(chat_id)  # 404 for anything that is not a chat
     if (run := hub.runs.get(chat_id)) is not None:
@@ -210,7 +211,9 @@ def delete_chat(chat_id: str, state: State) -> None:
 
 
 @put("/api/chats/{chat_id:str}/settings", status_code=204, sync_to_thread=True)
-def put_settings(chat_id: str, data: SettingsBody, state: State) -> None:
+def put_settings(
+    chat_id: FromPath[str], data: JSONBody[SettingsBody], state: State
+) -> None:
     hub: Hub = state.hub
     stored = hub.store.load(chat_id)
     if hub.runs.get(chat_id) is not None:
@@ -224,7 +227,9 @@ def put_settings(chat_id: str, data: SettingsBody, state: State) -> None:
 
 
 @post("/api/chats/{chat_id:str}/reply", status_code=200, sync_to_thread=True)
-def reply(chat_id: str, data: ReplyBody, state: State) -> ServerSentEvent:
+def reply(
+    chat_id: FromPath[str], data: JSONBody[ReplyBody], state: State
+) -> ServerSentEvent:
     hub: Hub = state.hub
     hub.store.load(chat_id)  # 404 first
     prompt = data.prompt.strip()
@@ -241,7 +246,9 @@ def reply(chat_id: str, data: ReplyBody, state: State) -> ServerSentEvent:
 
 
 @post("/api/chats/{chat_id:str}/attach", status_code=200, sync_to_thread=True)
-def attach(chat_id: str, data: AttachBody, state: State) -> ServerSentEvent:
+def attach(
+    chat_id: FromPath[str], data: JSONBody[AttachBody], state: State
+) -> ServerSentEvent:
     hub: Hub = state.hub
     run = hub.runs.get(chat_id)
     if run is None:
@@ -252,14 +259,14 @@ def attach(chat_id: str, data: AttachBody, state: State) -> ServerSentEvent:
 
 
 @post("/api/chats/{chat_id:str}/stop", status_code=204, sync_to_thread=True)
-def stop(chat_id: str, state: State) -> None:
+def stop(chat_id: FromPath[str], state: State) -> None:
     hub: Hub = state.hub
     if (run := hub.runs.get(chat_id)) is not None:
         run.cancel()
 
 
 @post("/api/heartbeat", status_code=204, sync_to_thread=False)
-def heartbeat(data: OwnerBody, state: State) -> None:
+def heartbeat(data: JSONBody[OwnerBody], state: State) -> None:
     hub: Hub = state.hub
     hub.runs.heartbeat(data.owner)
     hub.runs.reap()

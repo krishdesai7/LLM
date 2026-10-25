@@ -84,6 +84,15 @@ extend-select = [
   "TC",  # (flake8-type-checking): Automatically moves type-only imports behind if TYPE_CHECKING: blocks to reduce runtime import overhead.
 ]
 
+[tool.ruff.lint.flake8-type-checking]
+# Litestar reads handler annotations at runtime to bind params and bodies.
+runtime-evaluated-decorators = [
+  "litestar.get",
+  "litestar.post",
+  "litestar.put",
+  "litestar.delete",
+]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**.py" = ["assert"]
 
