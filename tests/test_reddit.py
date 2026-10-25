@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Self
+
 import httpx
 import pytest
+from httpx._client import Client
+from httpx._models import Request, Response
 
 from llm import reddit, web
 
@@ -133,7 +138,7 @@ class _FakeRedlib:
     def running(self) -> bool:
         return bool(self.launches) and not self.exits
 
-    def _popen(self, command, **kwargs):
+    def _popen(self, command, **kwargs) -> Self:
         self.launches.append((command, kwargs))
         return self
 
@@ -144,7 +149,7 @@ class _FakeRedlib:
         return 1 if self.exits else None
 
 
-def _thread_once_running(redlib: _FakeRedlib):
+def _thread_once_running(redlib: _FakeRedlib) -> Callable[[Request], Response]:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "www.reddit.com":
             return httpx.Response(200, text=FEED_XML)
@@ -165,7 +170,7 @@ def _serve(monkeypatch, handler) -> list[httpx.Request]:
         seen.append(request)
         return handler(request)
 
-    def client(**kwargs):
+    def client(**kwargs) -> Client:
         kwargs["transport"] = httpx.MockTransport(recording)
         return real_client(**kwargs)
 

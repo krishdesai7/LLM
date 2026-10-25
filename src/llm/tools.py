@@ -85,7 +85,7 @@ class ToolBox:
 
 
 def _web_search(query: str, count: int = web.DEFAULT_RESULTS) -> str:
-    results = web.search(query, count=max(1, min(int(count), 10)))
+    results = web.search(query, count=max(1, min(count, 10)))
     return web.render(results)
 
 

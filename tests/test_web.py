@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from httpx._client import Client
 
 from llm import web
 
@@ -86,7 +87,7 @@ def _serve(monkeypatch, handler) -> None:
     monkeypatch.setattr(web, "_assert_public", lambda _url: None)
     real_client = httpx.Client
 
-    def client(**kwargs):
+    def client(**kwargs) -> Client:
         kwargs["transport"] = httpx.MockTransport(handler)
         return real_client(**kwargs)
 
