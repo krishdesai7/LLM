@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import httpx
 import pytest
-from httpx._client import Client
-from httpx._models import Request, Response
 
 from llm import reddit, web
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from httpx._client import Client
+    from httpx._models import Request, Response
 
 # Trimmed from a real Redlib thread page: site chrome, a post, and a comment
 # with a nested reply.

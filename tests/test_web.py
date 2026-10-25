@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import httpx
 import pytest
-from httpx._client import Client
 
 from llm import web
+
+if TYPE_CHECKING:
+    from httpx._client import Client
 
 HTML = """
 <html><head><title>t</title><style>.a{color:red}</style></head>
