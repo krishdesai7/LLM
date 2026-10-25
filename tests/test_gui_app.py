@@ -109,7 +109,9 @@ def _events(response: Any) -> list[dict[str, Any]]:
 class Background:
     """Run a request on its own thread (a reply blocks until it is finished)."""
 
-    def __init__(self, app: Litestar, call: Callable[[TestClient[Litestar]], Any]) -> None:
+    def __init__(
+        self, app: Litestar, call: Callable[[TestClient[Litestar]], Any]
+    ) -> None:
         self.result: Any = None
         self._thread = threading.Thread(target=self._run, args=(app, call))
         self._thread.start()
