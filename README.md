@@ -169,6 +169,8 @@ uv run llm ask --markdown "compare X and Y"   # render markdown
 In chat: `/model` (reopens the picker, keeps your history), `/system`,
 `/clear`, `/history`, `/save`, `/web`, `/markdown`, `/temp`, `/providers`,
 `/exit`. Enter sends; alt+enter inserts a newline.
+Typed input is remembered across sessions in `$XDG_STATE_HOME/llm/history`
+(`~/.local/state/llm/history` by default).
 
 Every request starts with a short built-in preamble giving today's date (and,
 with `/web` on, guidance on using the search tools). A `--system`/`/system`

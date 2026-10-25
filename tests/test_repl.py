@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -103,3 +104,15 @@ def test_api_errors_do_not_kill_the_session(
     out = drive(["hi", "/clear"], session)
     assert "upstream exploded" in out
     assert "history cleared" in out
+
+
+def test_history_file_honours_xdg_state_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert repl.history_file() == tmp_path / "llm" / "history"
+
+
+def test_history_file_defaults_to_local_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    assert repl.history_file() == Path.home() / ".local" / "state" / "llm" / "history"

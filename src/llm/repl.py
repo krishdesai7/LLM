@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,10 +24,16 @@ if TYPE_CHECKING:
     from .chat import ChatSession, Delta
     from .registry import Registry
 
-__all__ = ["run"]
+__all__ = ["history_file", "run"]
 
-_HISTORY_FILE = Path.home() / ".cache" / "llm" / "history"
 _PROMPT_STYLE = Style.from_dict({"prompt": "ansicyan bold"})
+
+
+def history_file() -> Path:
+    """Where typed input is remembered across sessions (XDG state, not cache)."""
+    base = os.environ.get("XDG_STATE_HOME")
+    root = Path(base).expanduser() if base else Path.home() / ".local" / "state"
+    return root / "llm" / "history"
 
 
 @dataclass(slots=True)
@@ -272,8 +279,9 @@ def _prompt_session() -> PromptSession[str]:
 
     history = None
     try:
-        _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        history = FileHistory(str(_HISTORY_FILE))
+        path = history_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        history = FileHistory(str(path))
     except OSError:
         pass
 
