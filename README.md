@@ -84,8 +84,64 @@ tool fetch_url({"url": "https://github.com/astral-sh/uv/releases"})
 The latest release is …
 ```
 
-Two tools are offered: `web_search` and `fetch_url`. A turn is capped at
-6 tool rounds. `/web` toggles it mid-conversation.
+Three tools are offered: `web_search`, `fetch_url` and `find_in_page`.
+`/web` toggles them mid-conversation.
+
+Long pages come a part at a time: 6,000 characters, or 25,000 for a Reddit
+thread, cut at a line break and ending with the offset to read on from.
+`find_in_page` searches a page for words or a phrase ("vegetarian", "eggplant
+parm") and returns the matching passages with their offsets, best matches
+first, so the model can jump to the part of a long menu or thread it needs.
+Each conversation keeps the pages it has read for an hour, so reading on or
+searching costs no new request.
+
+A turn may make up to 40 tool calls (`TOOL_BUDGET` in `src/llm/chat.py`),
+enough to follow a thread out to each place it names. As the budget runs low,
+tool results remind the model to wrap up; once it is spent, the model gets one
+more round with tools switched off, so the turn still ends in an answer.
+
+When a fetch fails, the model is told what kind of failure it was and what to
+try instead, rather than handed a raw HTTP error. Bot checks (Cloudflare,
+DataDome, Akamai and the like) count as blocks even when they arrive with a
+200, and pages that only render with JavaScript are reported as such. The
+tools also remember what they've run: a call that already failed isn't run
+again (except one retry for timeouts and server errors), a repeat of one that
+succeeded points back to the earlier result, and a site that has blocked two
+requests isn't fetched again that conversation.
+
+Models also drift over a long run, so the loop works around the usual ways:
+
+- **Tool calls written as text.** A reply that writes its call out (as JSON at
+  the end, in a code fence, as `fetch_url({...})`, or as Kimi, DeepSeek or Qwen
+  tool-call tokens leaking through) is rewritten in history as a real call and
+  run. If the attempt can't be read, the model is asked once to call the tool
+  properly instead of the turn ending on it.
+- **Damaged arguments** (fenced, wrapped in prose, trailing commas,
+  single-quoted, JSON inside a string) are repaired, and a tool name like
+  `functions.fetch_url` is matched to `fetch_url`. Errors that can't be
+  repaired show the tool's parameters and an example call, and an unknown tool
+  suggests the closest real one.
+- **No progress.** After three failed calls in a row, the result says so,
+  lists them, and tells the model to change approach or move on.
+- **Fading instructions.** Every eight calls, a tool result restates the few
+  rules that matter most, near the end of the context where the model is
+  looking.
+
+A turn where any of that happened ends with a count, e.g. `harness: 2 tool
+calls recovered from text, 1 no-progress warning`, so you can see how much a
+model leaned on it. `session.last_events` has the same counts.
+
+Pages are requested with a browser's headers (a current Chrome User-Agent,
+`Accept`, `Accept-Language`), since many small sites turn away anything else.
+That won't get past serious bot checks, which come back as blocks as above.
+APIs and Reddit's feeds still get the descriptive `llm-cli` agent.
+
+Old tool results are shortened in what's sent to the model. Counting back from
+the newest, about 120,000 characters of tool output (`RECENT_TOOL_CHARS`) go
+whole; older results over 2,000 characters become a one-line stub naming the
+call. The saved history keeps everything. Making the same call again returns
+the full result from memory without a new request, and the preamble tells the
+model to keep brief notes as it goes so findings outlive the pages.
 
 **Search backends** follow the same one-env-var pattern as providers; the
 first configured one wins, and there's a keyless fallback so it works out of the box.
@@ -102,18 +158,20 @@ first configured one wins, and there's a keyless fallback so it works out of the
 uv run llm web                   # which backend is active, and why
 uv run llm web "query"           # run a search without spending tokens
 uv run llm fetch https://…       # see a page exactly as the model would
+uv run llm fetch https://… --offset 6000        # the next part
+uv run llm fetch https://… --find vegetarian    # what find_in_page returns
 LLM_SEARCH_BACKEND=exa    # pin one explicitly
 ```
 
 `fetch_url` resolves the host and refuses anything that isn't a public
 address. Loopback, private ranges, and link-local (including the cloud
 metadata endpoint) are blocked, and every redirect hop is re-checked. The
-model picks those URLs, often from a page it just read, so a prompt injected into that page shouldn't be able to aim the fetcher at your network. Responses are capped at 2 MB and truncated to 6,000 characters of text.
+model picks those URLs, often from a page it just read, so a prompt injected into that page shouldn't be able to aim the fetcher at your network. Responses are capped at 2 MB and pages are shown 6,000 characters at a time.
 
 **Reddit** turns away scripted requests (a JavaScript challenge, a login wall,
 or a 403), so Reddit links take their own route. With `LLM_REDDIT_URL` pointing
 at a self-hosted [Redlib](https://github.com/redlib-org/redlib), threads come
-back in full as a comment tree, truncated at 25,000 characters. Without it, or if
+back in full as a comment tree, 25,000 characters at a time. Without it, or if
 Redlib is down, they fall back to Reddit's RSS feeds, which allow about one page
 a minute and carry only some comments. `llm web` shows which route is active.
 
@@ -148,6 +206,13 @@ pkill redlib    # stop any old copy still running; the next session starts the n
 If that doesn't help yet, check the
 [Redlib issues](https://github.com/redlib-org/redlib/issues). Until it's fixed,
 Reddit links fall back to the feeds on their own.
+
+**Thinking models** that need their earlier reasoning back get it, as
+`reasoning_content` on the assistant messages they wrote. How much depends on
+the model, since it's billed as input: Kimi K3, K3.1 Pro and K2.7 Code require
+it on every assistant message in the conversation; other Kimi models only
+within the current turn's tool calls. Everything else gets none. The rules are
+`reasoning_replay` on each provider in `src/llm/registry.py`.
 
 Note that some providers also do search _their_ side (`web_search_options` on OpenAI, sonar models on Perplexity, `:online` on OpenRouter). That's a different mechanism, spelled differently by each one. This client-side loop works identically everywhere instead.
 

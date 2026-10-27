@@ -71,21 +71,26 @@ def status() -> str:
 
 
 def fetch(url: str, *, max_chars: int = REDDIT_PAGE_CHARS) -> str:
-    """A Reddit page as readable text, by whichever route is available."""
+    """A Reddit page as readable text, cut to ``max_chars``."""
+    return web.truncate(read(url), max_chars)
+
+
+def read(url: str) -> str:
+    """A whole Reddit page as readable text, by whichever route is available."""
     path = _path_of(url)
-    notice = ""
     base = instance_url()
-    if base is not None:
+    if base is None:
+        return _via_feed(path)
+    text = _try_redlib(base, path)
+    if text is None and _start_redlib(base):
         text = _try_redlib(base, path)
-        if text is None and _start_redlib(base):
-            text = _try_redlib(base, path)
-        if text is not None:
-            return web.truncate(text, max_chars)
-        notice = (
-            f"(Redlib at {base} is unreachable, so this came from Reddit's "
-            "feed, which carries only some of the comments.)\n\n"
-        )
-    return notice + web.truncate(_via_feed(path), max_chars)
+    if text is not None:
+        return text
+    notice = (
+        f"(Redlib at {base} is unreachable, so this came from Reddit's "
+        "feed, which carries only some of the comments.)\n\n"
+    )
+    return notice + _via_feed(path)
 
 
 def _path_of(url: str) -> str:
@@ -401,7 +406,8 @@ def _via_feed(path: str) -> str:
     url = f"{_SITE}{route}.rss" + (f"?{query}" if query else "")
     for attempt in range(2):
         try:
-            response = web.get_guarded(url)
+            # Reddit's rules ask scripts to say what they are.
+            response = web.get_guarded(url, headers={"User-Agent": web.USER_AGENT})
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 429:
                 raise

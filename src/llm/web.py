@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import operator
 import os
+import re
 import socket
+import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -25,18 +28,40 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
 __all__ = [
+    "FetchError",
+    "Pages",
     "Result",
     "SearchBackend",
     "WebError",
     "active_backend",
     "backends",
     "fetch",
+    "find_passages",
     "get_guarded",
+    "host_of",
+    "page_chars",
+    "read",
     "search",
     "truncate",
+    "window",
 ]
 
+#: Identifies us to APIs: search backends, Redlib, Reddit's feeds.
 USER_AGENT = "llm-cli/0.1 (+https://github.com/)"
+
+#: Sent when fetching pages for the model. Plenty of small sites (a
+#: restaurant's own page on shared hosting, say) turn away anything that does
+#: not look like a browser. Keep the version near current Chrome, as a stale
+#: one is itself a bot signal. Serious bot checks look at far more than
+#: headers and still say no; those come back as BLOCKED.
+BROWSER_HEADERS: Mapping[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+    ),
+    "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+    "Accept-Language": "en-US,en;q=0.9",
+}
 MAX_BYTES = 2_000_000
 MAX_REDIRECTS = 3
 TIMEOUT = 20.0
@@ -46,6 +71,106 @@ DEFAULT_RESULTS = 5
 
 class WebError(Exception):
     """A request could not be completed, or was refused by the guard."""
+
+
+FetchKind = Literal[
+    "blocked",
+    "rate_limited",
+    "not_found",
+    "rejected",
+    "server_error",
+    "timeout",
+    "unreachable",
+    "needs_js",
+]
+
+#: What the model should do next, per kind of failure. A bare "403 Forbidden"
+#: tells it what went wrong but not that retrying is pointless, so models tend
+#: to try the same URL again and again; saying so lets them switch sources.
+_ADVICE: dict[FetchKind, str] = {
+    "blocked": (
+        "{host} refuses automated requests, so fetching it again will fail the "
+        "same way. Find this information elsewhere: search for it, or use "
+        "another site that covers the same thing (a listing, review or "
+        "aggregator page)."
+    ),
+    "rate_limited": (
+        "{host} is limiting how often it can be fetched{wait}. Use another "
+        "source for now rather than retrying straight away."
+    ),
+    "not_found": (
+        "That page does not exist; the link may be stale or mistyped. Search "
+        "for the current page, or start from the site's home page."
+    ),
+    "rejected": (
+        "{host} rejected the request, and fetching it again will fail the same "
+        "way. Use another source."
+    ),
+    "server_error": (
+        "The site had a server error, which may be temporary. One retry is "
+        "reasonable; if that fails too, use another source."
+    ),
+    "timeout": (
+        "{host} did not respond in time. One retry is reasonable; if that "
+        "fails too, use another source."
+    ),
+    "unreachable": (
+        "Could not connect to {host}. Check the URL is spelled right; the site "
+        "may be down or gone, so look for another source."
+    ),
+    "needs_js": (
+        "The page builds its content with JavaScript, which this fetcher does "
+        "not run, so there is nothing to read. Look for the same information "
+        "on another site."
+    ),
+}
+
+_RETRYABLE: frozenset[FetchKind] = frozenset(
+    {"rate_limited", "server_error", "timeout"}
+)
+
+
+class FetchError(WebError):
+    """A page could not be read, classified so the model knows what to try next.
+
+    The message names the failure and gives advice; ``kind`` and
+    ``retryable`` let the tool loop decide whether a repeat is worth running.
+    """
+
+    def __init__(
+        self,
+        kind: FetchKind,
+        url: str,
+        *,
+        status: int | None = None,
+        detail: str = "",
+        retry_after: float | None = None,
+    ) -> None:
+        self.kind: FetchKind = kind
+        self.url = url
+        self.status = status
+        self.retry_after = retry_after
+        reasons = [f"HTTP {status}"] if status is not None else []
+        reasons += [detail] if detail else []
+        reason = f" ({', '.join(reasons)})" if reasons else ""
+        wait = f" (wait about {retry_after:g} seconds)" if retry_after else ""
+        advice = _ADVICE[kind].format(host=self.host, wait=wait)
+        label = kind.replace("_", " ").upper()
+        super().__init__(f"could not fetch {url}: {label}{reason}.\n{advice}")
+
+    @property
+    def host(self) -> str:
+        return host_of(self.url) or self.url
+
+    @property
+    def retryable(self) -> bool:
+        return self.kind in _RETRYABLE
+
+
+def host_of(url: str) -> str | None:
+    """The host of ``url`` without ``www.``, so both spellings count as one site."""
+    host = (urlparse(url.strip()).hostname or "").lower()
+    return host.removeprefix("www.") or None
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,25 +254,255 @@ def search(query: str, *, count: int = DEFAULT_RESULTS) -> list[Result]:
 
 
 def fetch(url: str, *, max_chars: int | None = None) -> str:
-    """Download ``url`` and return it as readable plain text.
+    """Download ``url`` and return it as readable plain text, truncated.
 
-    ``max_chars`` defaults per site: Reddit threads get more room.
+    ``max_chars`` defaults per site (see :func:`page_chars`).
     """
+    return truncate(read(url), max_chars or page_chars(url))
+
+
+def page_chars(url: str) -> int:
+    """How much of a page to show at once. Reddit threads get more room."""
     from . import reddit  # imports this module, so it cannot sit at the top
 
-    if reddit.handles(url):
-        return reddit.fetch(url, max_chars=max_chars or reddit.REDDIT_PAGE_CHARS)
-    response = get_guarded(url)
+    return reddit.REDDIT_PAGE_CHARS if reddit.handles(url) else DEFAULT_PAGE_CHARS
+
+
+def read(url: str) -> str:
+    """Download ``url`` and return all of it as readable plain text.
+
+    Failures raise :class:`FetchError`, which says what went wrong and what
+    to try instead.
+    """
+    from . import reddit
+
+    try:
+        if reddit.handles(url):
+            return reddit.read(url)
+        response = get_guarded(url)
+    except httpx.HTTPStatusError as exc:
+        raise _status_error(url, exc.response) from exc
+    except httpx.TimeoutException as exc:
+        raise FetchError("timeout", url) from exc
+    except httpx.TransportError as exc:
+        detail = str(exc) or type(exc).__name__
+        raise FetchError("unreachable", url, detail=detail) from exc
     content_type = response.headers.get("content-type", "")
     body = response.text
-    text = body if "html" not in content_type.lower() else html_to_text(body)
-    text = text.strip()
+    is_html = "html" in content_type.lower()
+    text = (html_to_text(body) if is_html else body).strip()
+    if is_html and len(text) < _CHALLENGE_MAX_CHARS:
+        if (checker := _bot_check(response)) is not None:
+            raise FetchError("blocked", url, detail=f"a bot check from {checker}")
+        if not text or _JS_ONLY.search(text):
+            raise FetchError("needs_js", url, detail="no readable text")
     if not text:
+        raise FetchError("needs_js", url, detail="no readable text")
+    return text
+
+
+# -- a page a part at a time ----------------------------------------------------
+
+#: How long a page read this session is reused before it is fetched again.
+PAGE_TTL = 3600.0
+#: Pages a session keeps at once; the least recently used go first.
+MAX_PAGES = 256
+
+
+class Pages:
+    """Pages read this session, kept whole so the model can page through them.
+
+    Reading on through a long page, or searching it, then costs no request.
+    """
+
+    def __init__(self) -> None:
+        self._texts: dict[str, tuple[float, str]] = {}
+
+    def text(self, url: str) -> str:
+        key = url.strip().partition("#")[0].rstrip("/")
+        cached = self._texts.pop(key, None)
+        if cached is not None and _now() - cached[0] < PAGE_TTL:
+            self._texts[key] = cached
+            return cached[1]
+        text = read(url)
+        self._texts[key] = (_now(), text)
+        while len(self._texts) > MAX_PAGES:
+            del self._texts[next(iter(self._texts))]
+        return text
+
+
+def window(text: str, offset: int, size: int) -> str:
+    """``size`` characters of ``text`` from ``offset``, saying how to read on.
+
+    A part ends at a line break where there is one in its second half, so
+    lines are not cut in two. Raises :class:`WebError` for an offset past
+    the end.
+    """
+    total = len(text)
+    start = max(0, offset)
+    if start and start >= total:
+        msg = f"offset {offset} is past the end of the page ({total:,} characters)"
+        raise WebError(msg)
+    end = min(total, start + size)
+    if end < total:
+        newline = text.rfind("\n", start + size // 2, end)
+        if newline != -1:
+            end = newline + 1
+    body = text[start:end].rstrip()
+    head = f"[Continuing from character {start:,} of {total:,}.]\n\n" if start else ""
+    if end >= total:
+        return f"{head}{body}"
+    return (
+        f"{head}{body}\n\n[Characters {start:,}-{end:,} of {total:,}. To read on, "
+        f"call fetch_url with offset {end}, or use find_in_page to jump to what "
+        "you need.]"
+    )
+
+
+_STOPWORDS = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+    ]
+)
+#: Characters shown either side of a match on a long line.
+_CONTEXT = 250
+
+
+def find_passages(text: str, query: str, *, limit: int = 8) -> str:
+    """The lines of ``text`` that match ``query``, best first, with offsets.
+
+    A line scores by how many of the query's words it contains, and gets a
+    bonus for the whole phrase. Matching ignores case and finds words inside
+    longer ones ("pasta" in "pastas"). Each passage carries an offset to read
+    on from with ``fetch_url``.
+    """
+    phrase = " ".join(query.casefold().split())
+    words = [w for w in re.findall(r"\w[\w'-]*", phrase) if w not in _STOPWORDS]
+    words = list(dict.fromkeys(words or phrase.split()))
+    if not words:
+        msg = "find_in_page needs some words to look for"
+        raise WebError(msg)
+    scored: list[tuple[int, int, str]] = []
+    position = 0
+    for line in text.splitlines(keepends=True):
+        folded = line.casefold()
+        hits = [folded.find(word) for word in words if word in folded]
+        if hits:
+            score = len(hits) + (
+                len(words) if len(words) > 1 and phrase in folded else 0
+            )
+            first = min(hits)
+            scored.append((score, position, _passage(line, first, position)))
+        position += len(line)
+    if not scored:
         return (
-            "(the page returned no readable text: it may need JavaScript, "
-            "or be refusing automated requests)"
+            f"No passages match {query!r} in this page ({len(text):,} "
+            "characters). Try other words (a synonym, singular or plural), or "
+            "read the page with fetch_url."
         )
-    return truncate(text, max_chars or DEFAULT_PAGE_CHARS)
+    best = sorted(scored, key=lambda item: (-item[0], item[1]))[:limit]
+    shown = "\n".join(
+        passage for _, _, passage in sorted(best, key=operator.itemgetter(1))
+    )
+    count = len(scored)
+    noun = "passage" if count == 1 else "passages"
+    of = f"{len(best)} of " if len(best) < count else ""
+    return (
+        f"{of}{count} {noun} matching {query!r} ({len(text):,} characters in "
+        f"all), as @offset: text\n{shown}\n\nRead around one with fetch_url "
+        "and its offset."
+    )
+
+
+def _passage(line: str, first: int, position: int) -> str:
+    """One matching line as ``@offset: text``, cut down around the match."""
+    if len(line) <= 2 * _CONTEXT:
+        return f"@{position}: {' '.join(line.split())}"
+    start = max(0, first - _CONTEXT)
+    end = first + _CONTEXT
+    lead = "…" if start else ""
+    tail = "…" if end < len(line) else ""
+    return f"@{position + start}: {lead}{' '.join(line[start:end].split())}{tail}"
+
+
+def _now() -> float:
+    return time.monotonic()
+
+
+# -- telling a refusal from a page --------------------------------------------
+
+#: Bot checks a site may serve, by a marker in their HTML. Only short pages are
+#: checked: a real page can embed a CAPTCHA widget in a form and still be full
+#: of content.
+_BOT_CHECKS: tuple[tuple[str, str], ...] = (
+    ("challenge-platform", "Cloudflare"),
+    ("cf-chl", "Cloudflare"),
+    ("attention required! | cloudflare", "Cloudflare"),
+    ("captcha-delivery.com", "DataDome"),
+    ("px-captcha", "PerimeterX"),
+    ("_incapsula_resource", "Imperva"),
+    ("you don't have permission to access", "Akamai"),
+    ("verify you are human", "the site"),
+    ("are you a robot", "the site"),
+    ("unusual traffic", "the site"),
+    ("captcha", "the site"),
+)
+_CHALLENGE_MAX_CHARS = 2000
+_JS_ONLY = re.compile(
+    r"(enable|requires?|turn on) javascript|javascript (is )?(required|disabled)",
+    re.IGNORECASE,
+)
+
+
+def _bot_check(response: httpx.Response) -> str | None:
+    """Who is challenging us, if ``response`` is a bot check rather than a page."""
+    if response.headers.get("cf-mitigated", "").lower() == "challenge":
+        return "Cloudflare"
+    html = response.text.lower()
+    return next((name for marker, name in _BOT_CHECKS if marker in html), None)
+
+
+def _status_error(url: str, response: httpx.Response) -> FetchError:
+    status = response.status_code
+    checker = _bot_check(response) if status in {403, 429, 503} else None
+    if checker is not None:
+        return FetchError(
+            "blocked", url, status=status, detail=f"a bot check from {checker}"
+        )
+    if status == 429:
+        wait = _retry_after(response)
+        return FetchError("rate_limited", url, status=status, retry_after=wait)
+    kind: FetchKind
+    if status in {401, 403, 451}:
+        kind = "blocked"
+    elif status in {404, 410}:
+        kind = "not_found"
+    elif status >= 500:
+        kind = "server_error"
+    else:
+        kind = "rejected"
+    return FetchError(kind, url, status=status)
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    value = response.headers.get("retry-after", "").strip()
+    return float(value) if value.isdigit() else None
 
 
 def truncate(text: str, max_chars: int) -> str:
@@ -159,13 +514,15 @@ def truncate(text: str, max_chars: int) -> str:
 # -- HTTP with a guard ------------------------------------------------------
 
 
-def get_guarded(url: str) -> httpx.Response:
+def get_guarded(
+    url: str, *, headers: Mapping[str, str] = BROWSER_HEADERS
+) -> httpx.Response:
     """GET ``url``, re-checking every redirect hop against the address guard."""
     current = url
     with httpx.Client(
         timeout=TIMEOUT,
         follow_redirects=False,
-        headers={"User-Agent": USER_AGENT},
+        headers=dict(headers),
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
             _assert_public(current)

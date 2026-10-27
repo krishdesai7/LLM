@@ -48,7 +48,7 @@ def test_web_true_attaches_toolbox_and_false_clears_it(
 ) -> None:
     session = build_session(fake_registry, _stored(Settings("fake/fake-1", web=True)))
     assert session.tools is not None
-    assert session.tools.names == ["web_search", "fetch_url"]
+    assert session.tools.names == ["web_search", "fetch_url", "find_in_page"]
     apply_settings(session, fake_registry, Settings("fake/fake-1", web=False))
     assert session.tools is None
 

@@ -97,6 +97,24 @@ def test_config_can_override_a_builtin_base_url(tmp_path) -> None:
     ref = Registry.load(path).resolve("kimi-k3")
     assert ref.provider.base_url == "https://api.moonshot.cn/v1"
     assert ref.provider.env_var == "MOONSHOT_API_KEY"  # inherited
+    assert ref.reasoning_replay == "all"  # inherited too
+
+
+@pytest.mark.parametrize(
+    ("spec", "replay"),
+    [
+        ("kimi-k3", "all"),
+        ("kimi-k3.1-pro", "all"),
+        ("kimi-k2.7-code-highspeed", "all"),
+        ("kimi-k2.6", "turn"),
+        ("gpt-5", "none"),
+        ("deepseek-reasoner", "none"),
+    ],
+)
+def test_reasoning_replay_follows_the_model(
+    bare: Registry, spec: str, replay: str
+) -> None:
+    assert bare.resolve(spec).reasoning_replay == replay
 
 
 def test_incomplete_custom_provider_is_rejected(tmp_path) -> None:

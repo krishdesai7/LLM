@@ -129,6 +129,8 @@ def _echo_stream(session: ChatSession, prompt: str) -> None:
             )
         elif delta.kind == "tool_call":
             ui.stderr.print(f"[tool]tool[/tool] {delta.text}", highlight=False)
+        elif delta.kind == "notice":
+            ui.stderr.print(f"[warn]{delta.text}[/warn]", highlight=False)
     ui.console.print()
 
 
@@ -238,13 +240,30 @@ def fetch(
     chars: Annotated[
         int | None,
         typer.Option(
-            "--chars", help="Truncate the extracted text.", show_default=False
+            "--chars",
+            help="Characters per part (default: as much as the model gets).",
+            show_default=False,
+        ),
+    ] = None,
+    offset: Annotated[
+        int, typer.Option("--offset", help="Character to start reading from.")
+    ] = 0,
+    find: Annotated[
+        str | None,
+        typer.Option(
+            "--find", help="Show passages matching this, as find_in_page does."
         ),
     ] = None,
 ) -> None:
     """Print a page as the model would see it. Useful for checking extraction."""
     try:
-        ui.console.print(webmod.fetch(url, max_chars=chars), highlight=False)
+        text = webmod.read(url)
+        shown = (
+            webmod.find_passages(text, find)
+            if find
+            else webmod.window(text, offset, chars or webmod.page_chars(url))
+        )
+        ui.console.print(shown, highlight=False, markup=False)
     except webmod.WebError as exc:
         _die(exc)
 

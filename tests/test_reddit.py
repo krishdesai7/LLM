@@ -347,6 +347,12 @@ def test_without_an_instance_the_feed_is_used(monkeypatch) -> None:
     assert "u/Garcon · 2025-05-11: Via Carota" in text
 
 
+def test_the_feed_is_asked_for_with_a_descriptive_user_agent(monkeypatch) -> None:
+    seen = _serve(monkeypatch, lambda _r: httpx.Response(200, text=FEED_XML))
+    web.fetch("https://www.reddit.com/r/FoodNYC/comments/1kjzwrv/")
+    assert seen[0].headers["user-agent"] == web.USER_AGENT
+
+
 def test_feed_urls_keep_the_query(monkeypatch) -> None:
     seen = _serve(monkeypatch, lambda _r: httpx.Response(200, text=FEED_XML))
     web.fetch("https://www.reddit.com/r/FoodNYC/search?q=italian&restrict_sr=on")

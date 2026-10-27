@@ -18,7 +18,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Mapping
@@ -29,6 +29,7 @@ __all__: list[str] = [
     "MissingAPIKeyError",
     "ModelRef",
     "Provider",
+    "ReasoningReplay",
     "Registry",
     "UnknownModelError",
     "config_path",
@@ -48,6 +49,13 @@ class MissingAPIKeyError(LLMError):
     """The provider was resolved but its API key is not in the environment."""
 
 
+#: How much of a model's earlier reasoning must be sent back to it: none, the
+#: current turn's (its tool-call loop), or every assistant message's. Some
+#: thinking models lose the thread, or reject the request, without it; it is
+#: billed as input, so send no more than the model needs.
+ReasoningReplay = Literal["none", "turn", "all"]
+
+
 @dataclass(frozen=True, slots=True)
 class Provider:
     """An OpenAI-compatible API endpoint."""
@@ -59,10 +67,22 @@ class Provider:
     #: used when the endpoint needs no real credential (local servers)
     fallback_key: str | None = None
     headers: Mapping[str, str] = field(default_factory=dict)
+    #: ``(model-id prefix, replay)`` pairs, first match wins; else ``"none"``
+    reasoning_replay: tuple[tuple[str, ReasoningReplay], ...] = ()
 
     @property
     def title(self) -> str:
         return self.label or self.name
+
+    def replay_for(self, model_id: str) -> ReasoningReplay:
+        return next(
+            (
+                mode
+                for prefix, mode in self.reasoning_replay
+                if model_id.startswith(prefix)
+            ),
+            "none",
+        )
 
     def api_key(self) -> str | None:
         """The credential for this provider, or ``None`` if unavailable."""
@@ -93,6 +113,10 @@ class ModelRef:
     @property
     def spec(self) -> str:
         return f"{self.provider.name}/{self.model_id}"
+
+    @property
+    def reasoning_replay(self) -> ReasoningReplay:
+        return self.provider.replay_for(self.model_id)
 
     def __str__(self) -> str:
         return self.spec
@@ -126,6 +150,15 @@ _BUILTIN_PROVIDERS: tuple[Provider, ...] = (
         env_var="MOONSHOT_API_KEY",
         base_url="https://api.moonshot.ai/v1",
         label="Moonshot (Kimi)",
+        # Per Kimi's thinking-model guide: K3, K3.1 Pro and K2.7 Code keep
+        # their thinking across turns and need it back on every assistant
+        # message; the others need it only within a tool-call loop and ignore
+        # older turns' by default.
+        reasoning_replay=(
+            ("kimi-k3", "all"),
+            ("kimi-k2.7-code", "all"),
+            ("kimi-", "turn"),
+        ),
     ),
     Provider(
         name="deepseek",
@@ -411,6 +444,7 @@ def _provider_from_config(
                 field_name="headers", default=dict(existing.headers) if existing else {}
             )
         ),
+        reasoning_replay=existing.reasoning_replay if existing else (),
     )
 
 
